@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { FlaskConical, CheckCircle, Clock, User, Sparkles, ExternalLink, AlertTriangle } from 'lucide-react';
+import { FlaskConical, CheckCircle, Clock, User, Sparkles, AlertTriangle } from 'lucide-react';
 import patientApi from '../../services/patientApi';
 import Navbar from '../../components/Navbar';
 import toast from 'react-hot-toast';
@@ -77,22 +77,6 @@ export default function LabTests() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
-                      {(lab.pdf_url || lab._id || lab.id) && (
-                        <a
-                          href={(() => {
-                            const backendBase = (import.meta.env.VITE_API_URL || 'https://ayu-disha.onrender.com/api').replace(/\/api\/?$/, '');
-                            if (!lab.pdf_url) return `${backendBase}/api/lab/orders/${lab._id || lab.id}/pdf`;
-                            let rawUrl = String(lab.pdf_url).replace(/^["']|["']$/g, '').trim();
-                            if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
-                            return `${backendBase}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
-                          })()}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-semibold bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-                        >
-                          <ExternalLink size={12} /> View PDF
-                        </a>
-                      )}
                       <span className={`text-xs font-semibold px-3 py-1 rounded-full ${sc.color}`}>
                         {sc.label}
                       </span>

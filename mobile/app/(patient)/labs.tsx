@@ -1,9 +1,10 @@
 import React from 'react';
-import { View, Text, ScrollView, ActivityIndicator, TouchableOpacity, Linking, Platform } from 'react-native';
+import { View, Text, ScrollView, ActivityIndicator, Platform } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import patientApi from '../../src/services/patientApi';
-import { FlaskConical, AlertTriangle, User, Clock, ExternalLink, Sparkles } from 'lucide-react-native';
+import api from '../../src/services/api';
+import { FlaskConical, AlertTriangle, User, Clock, Sparkles } from 'lucide-react-native';
 
 const statusConfig: any = {
   resulted: { label: 'Resulted', color: 'bg-green-100 text-green-700' },
@@ -24,23 +25,6 @@ export default function LabTestsScreen() {
     queryFn: patientApi.getMyLabResults,
     refetchInterval: 30000,
   });
-
-  const openPdf = (lab: any) => {
-    let url = '';
-    const backendBase = 'https://ayu-disha.onrender.com';
-    if (!lab.pdf_url) {
-      url = `${backendBase}/api/lab/orders/${lab._id || lab.id}/pdf`;
-    } else {
-      let rawUrl = String(lab.pdf_url).replace(/^["']|["']$/g, '').trim();
-      if (/^https?:\/\//i.test(rawUrl)) {
-        url = rawUrl;
-      } else {
-        url = `${backendBase}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
-      }
-    }
-    
-    Linking.openURL(url).catch(err => console.error("Couldn't load page", err));
-  };
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F3EE]">
@@ -105,27 +89,21 @@ export default function LabTestsScreen() {
                     </View>
                   </View>
 
-                  <View className="flex-row items-center flex-wrap mb-3">
+                  <View className="flex-row items-center flex-wrap mb-3 gap-y-1">
+                    {lab.patient_name && (
+                      <View className="flex-row items-center mr-3 mb-1">
+                        <User size={12} color="#6b7280" className="mr-1" />
+                        <Text className="text-xs font-semibold text-gray-700">Patient: {lab.patient_name}</Text>
+                      </View>
+                    )}
                     <View className="flex-row items-center mr-3 mb-1">
-                      <User size={12} color="#6b7280" className="mr-1" />
-                      <Text className="text-xs text-gray-500">{lab.ordered_by || 'Unknown'}</Text>
+                      <Text className="text-xs text-gray-500">Dr. {lab.ordered_by || 'Duty Specialist'} • {lab.hospital_name || 'General Hospital'}</Text>
                     </View>
                     <View className="flex-row items-center mb-1">
                       <Clock size={12} color="#6b7280" className="mr-1" />
                       <Text className="text-xs text-gray-500">{safeFormatDate(lab.ordered_date)}</Text>
                     </View>
                   </View>
-
-                  {/* Actions */}
-                  {(lab.pdf_url || lab._id || lab.id) && (
-                    <TouchableOpacity 
-                      onPress={() => openPdf(lab)}
-                      className="bg-blue-50 py-2.5 rounded-xl flex-row justify-center items-center mb-3"
-                    >
-                      <ExternalLink size={14} color="#1d4ed8" className="mr-2" />
-                      <Text className="text-blue-700 font-bold text-xs">View PDF Report</Text>
-                    </TouchableOpacity>
-                  )}
 
                   {!isResulted && (
                     <View className="bg-amber-50 rounded-xl px-4 py-3">

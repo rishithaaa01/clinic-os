@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Home, Users, Settings, Activity, Send } from 'lucide-react-native';
+import { Home, Users, Settings, Activity, Send, Calendar } from 'lucide-react-native';
 
 export default function DoctorLayout() {
   return (
@@ -21,6 +21,13 @@ export default function DoctorLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color }) => <Home size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="appointments"
+        options={{
+          title: 'Appointments',
+          tabBarIcon: ({ color }) => <Calendar size={24} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -55,6 +62,12 @@ export default function DoctorLayout() {
         name="consult"
         options={{
           href: null, // Hides this from the bottom tab bar completely
+        }}
+      />
+      <Tabs.Screen
+        name="verification-status"
+        options={{
+          href: null, // Hides from bottom tab bar
         }}
       />
     </Tabs>

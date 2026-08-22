@@ -11,36 +11,36 @@ import logging
 
 logging.basicConfig(level=logging.INFO)
 
+from services.local_ai_service import local_ai as local_ai_service_inst
+import asyncio
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Ensure database is connected before app starts
     await connect_to_mongo()
     # Start background reminder scheduler
     app.state.scheduler = start_scheduler()
+    # Pre-warm local Whisper STT model asynchronously on startup
+    asyncio.create_task(asyncio.to_thread(local_ai_service_inst.load_stt_pipeline))
     yield
     await close_mongo_connection()
 
 app = FastAPI(title="Ayu Disha API", lifespan=lifespan)
 
-# Custom validation error handler
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print(f"[VALIDATION ERROR] Path: {request.url.path}")
-    print(f"[VALIDATION ERROR] Errors: {exc.errors()}")
-    print(f"[VALIDATION ERROR] Body: {exc.body}")
-    return JSONResponse(
-        status_code=422,
-        content={"detail": exc.errors(), "body": exc.body}
-    )
+from middleware.error_handler import global_exception_handler, validation_exception_handler
+
+# Centralized Exception Handlers (Developer logs + User-friendly messages)
+app.add_exception_handler(Exception, global_exception_handler)
+app.add_exception_handler(RequestValidationError, validation_exception_handler)
 
 # Standard Security Headers Middleware
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
-    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-    response.headers["Content-Security-Policy"] = "default-src 'self'"
+    response.headers["Content-Security-Policy"] = "default-src 'self' 'unsafe-inline' blob: data: http: https:"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -92,6 +92,12 @@ app.include_router(lab.router,          prefix="/api/lab",          tags=["lab"]
 app.include_router(appointments.router, prefix="/api/appointments", tags=["appointments"])
 app.include_router(local_ai.router,     prefix="/api/local-ai",     tags=["local-ai"])
 
+from routes.auth import get_hospitals as public_get_hospitals
+
+@app.get("/api/hospitals")
+async def get_hospitals_root():
+    return await public_get_hospitals()
+
 @app.get("/")
 async def root():
     db_status = "connected" if get_database() is not None else "disconnected"
@@ -111,3 +117,8 @@ async def catch_all(request: Request, path_name: str):
     )
 
 print("[START] Ayu Disha Master Backend is Live")
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+

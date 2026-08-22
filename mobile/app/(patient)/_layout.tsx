@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Home, FileText, FlaskConical, Pill, Settings } from 'lucide-react-native';
+import { Home, FileText, FlaskConical, Pill, Settings, Calendar } from 'lucide-react-native';
 
 export default function PatientLayout() {
   return (
@@ -21,6 +21,13 @@ export default function PatientLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color }) => <Home size={24} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="appointments"
+        options={{
+          title: 'Book Slot',
+          tabBarIcon: ({ color }) => <Calendar size={24} color={color} />,
         }}
       />
       <Tabs.Screen
@@ -48,13 +55,19 @@ export default function PatientLayout() {
         name="settings"
         options={{
           title: 'Settings',
-          tabBarIcon: ({ color }) => <Settings size={24} color={color} />,
+          tabBarIcon: ({ color }) => <Settings size={22} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="symptoms"
+        options={{
+          href: null, // Hidden from bottom tab bar, accessed from Dashboard action
         }}
       />
       <Tabs.Screen
         name="consents"
         options={{
-          href: null, // Hidden from tab bar, accessed from Settings
+          href: null, // Hidden from bottom tab bar, accessed from Settings
         }}
       />
     </Tabs>

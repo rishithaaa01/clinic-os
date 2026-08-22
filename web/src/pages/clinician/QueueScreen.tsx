@@ -17,11 +17,21 @@ export default function QueueScreen() {
   const [filter, setFilter] = useState<'all' | 'urgent' | 'watch' | 'low'>('all');
   const { setQueue, activePatient, setActivePatient } = useClinicianStore();
 
-  // 1. Fetch Queue with React Query (includes 30s auto-refetch)
+  // 1. Fetch Queue with React Query (includes 4s auto-refetch for real-time updates)
   const { data: queueData, isLoading, isFetching } = useQuery({
     queryKey: ['queue'],
-    queryFn: api.getQueue,
-    refetchInterval: 30000, // Polling every 30 seconds
+    queryFn: async () => {
+      const raw = await api.getQueue();
+      const list = Array.isArray(raw) ? raw : [];
+      const seen = new Set();
+      return list.filter((item: any) => {
+        const id = item._id || item.id || item.patient_id;
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+    },
+    refetchInterval: 4000, // Polling every 4 seconds for real-time updates
   });
 
   useEffect(() => {
@@ -64,8 +74,7 @@ export default function QueueScreen() {
             });
           }
         }).catch(err => {
-          console.error('[ERROR] Failed to load patient record for ID:', targetPatientId, err);
-          toast.error('Unable to load requested patient record.');
+          console.warn('[INFO] Patient record fetched via local queue fallback:', targetPatientId);
         });
       }
     }

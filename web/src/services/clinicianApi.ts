@@ -1,20 +1,48 @@
 import axios from 'axios';
 
-const API_URL = `${import.meta.env.VITE_API_URL || 'https://ayu-disha.onrender.com/api'}/clinician`;
+const getClinicianApiUrl = () => {
+  if (import.meta.env.VITE_API_URL) {
+    return `${import.meta.env.VITE_API_URL}/clinician`;
+  }
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname;
+    if (host === 'localhost' || host === '127.0.0.1' || host.startsWith('192.168.')) {
+      return `http://${host}:8000/api/clinician`;
+    }
+  }
+  return 'https://ayu-disha.onrender.com/api/clinician';
+};
+
+const API_URL = getClinicianApiUrl();
 
 const clinicianApi = axios.create({
   baseURL: API_URL,
   timeout: 15000,
 });
 
-// Add JWT token to every request automatically
+// Add JWT token and client-type header to every request automatically
 clinicianApi.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  config.headers['x-client-type'] = 'web';
   return config;
 });
+
+clinicianApi.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
+      if (error.config?.url?.includes('/voice') || error.config?.url?.includes('/audio')) {
+        error.message = "We're taking longer than expected to process the recording. Please try again.";
+      } else {
+        error.message = "The request took longer than expected to respond. Please try again.";
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 export const api = {
   // Generic HTTP methods
@@ -23,8 +51,11 @@ export const api = {
   put: (url: string, data?: any) => clinicianApi.put(url, data).then(res => res.data),
   delete: (url: string) => clinicianApi.delete(url).then(res => res.data),
 
-  // Queue & Patients
+  // Queue, Appointments & Patients
   getQueue: () => clinicianApi.get('/queue').then(res => res.data),
+  getDoctorAppointments: () => clinicianApi.get('/appointments').then(res => res.data).catch(() => []),
+  respondToAppointment: (id: string, action: string, message?: string) => clinicianApi.post(`/appointments/${id}/respond`, { action, message }).then(res => res.data),
+  checkInAppointment: (id: string) => clinicianApi.post(`/appointments/${id}/check-in`).then(res => res.data),
   getMyPatients: () =>
     clinicianApi.get('/my-patients').then(res => res.data).catch(() => []),
   getPatientRecord: (id: string) => clinicianApi.get(`/patients/${id}`).then(res => res.data),
@@ -45,22 +76,35 @@ export const api = {
   // Clinical Tools
   checkInteraction: (data: any) => clinicianApi.post('/prescriptions/check-interaction', data).then(res => res.data),
   savePrescription: (data: any) => clinicianApi.post('/prescriptions', data).then(res => res.data),
-  getDifferential: (symptoms: string, patientId: string) =>
-    clinicianApi.get('/differential', { params: { symptoms, patient_id: patientId } }).then(res => res.data),
+  getDifferential: (symptoms: string, patientId?: string | null) =>
+    clinicianApi.get('/differential', { params: { symptoms, patient_id: patientId || '' } }).then(res => res.data),
 
   // Voice & Lab Orders
   processVoiceNote: async (visitId: string, audioBlob: Blob) => {
     const formData = new FormData();
-    formData.append('file', audioBlob, 'voice_note.webm');
-    return clinicianApi.post(`/voice-note?visit_id=${visitId}`, formData).then(res => res.data);
+    const mime = audioBlob.type || 'audio/webm';
+    let ext = 'webm';
+    if (mime.includes('mp4')) ext = 'mp4';
+    else if (mime.includes('ogg')) ext = 'ogg';
+    else if (mime.includes('wav')) ext = 'wav';
+    else if (mime.includes('m4a')) ext = 'm4a';
+
+    formData.append('file', audioBlob, `voice_note.${ext}`);
+    
+    // Do NOT manually set 'Content-Type': 'multipart/form-data' header.
+    // Letting browser/Axios auto-set boundary prevents Starlette multipart parser hanging & 30s timeouts.
+    return clinicianApi.post(`/voice-note?visit_id=${encodeURIComponent(visitId || 'new')}`, formData, {
+      timeout: 60000,
+    }).then(res => res.data);
   },
   orderLabs: (data: any) => clinicianApi.post('/lab-orders', data).then(res => res.data),
 
   // Lab Results (doctor can only see their assigned patients' results)
   getMyLabResults: async () => {
+    const base = import.meta.env.VITE_API_URL || (typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname.startsWith('192.168.')) ? `http://${window.location.hostname}:8000/api` : 'https://ayu-disha.onrender.com/api');
     const labApi = axios.create({
-      baseURL: import.meta.env.VITE_API_URL || 'https://ayu-disha.onrender.com/api',
-      timeout: 15000,
+      baseURL: base,
+      timeout: 35000,
     });
     const token = localStorage.getItem('token');
     if (token) {

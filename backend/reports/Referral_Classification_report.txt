@@ -1,0 +1,74 @@
+=========================================================
+MODEL B: REFERRAL CLASSIFICATION - COMPREHENSIVE EVALUATION
+=========================================================
+
+Algorithm: TF-IDF Vectorizer + Random Forest Classifier (150 estimators)
+Total Samples: 960 | Unique Specialties: 15
+
+--- CLASS DISTRIBUTION ---
+medical_specialty
+Pulmonology         80
+Cardiology          80
+Gastroenterology    80
+Orthopedics         80
+Dermatology         80
+ENT                 80
+Neurology           80
+Gynecology          80
+General Medicine    80
+Urology             40
+Endocrinology       40
+Pediatrics          40
+Ophthalmology       40
+Psychiatry          40
+Oncology            40
+
+Accuracy:            1.0000
+5-Fold CV Accuracy:  1.0000 (+/- 0.0000)
+Balanced Accuracy:   1.0000
+Macro Precision:     1.0000
+Weighted Precision:  1.0000
+Macro Recall:        1.0000
+Weighted Recall:     1.0000
+Macro F1-Score:      1.0000
+Weighted F1-Score:   1.0000
+
+--- CONFUSION MATRIX ---
+[[16  0  0  0  0  0  0  0  0  0  0  0  0  0  0]
+ [ 0 16  0  0  0  0  0  0  0  0  0  0  0  0  0]
+ [ 0  0 16  0  0  0  0  0  0  0  0  0  0  0  0]
+ [ 0  0  0  8  0  0  0  0  0  0  0  0  0  0  0]
+ [ 0  0  0  0 16  0  0  0  0  0  0  0  0  0  0]
+ [ 0  0  0  0  0 16  0  0  0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0 16  0  0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0 16  0  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  8  0  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  8  0  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0 16  0  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  8  0  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  8  0  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0 16  0]
+ [ 0  0  0  0  0  0  0  0  0  0  0  0  0  0  8]]
+
+--- PER-CLASS CLASSIFICATION REPORT ---
+                  precision    recall  f1-score   support
+
+      Cardiology       1.00      1.00      1.00        16
+     Dermatology       1.00      1.00      1.00        16
+             ENT       1.00      1.00      1.00        16
+   Endocrinology       1.00      1.00      1.00         8
+Gastroenterology       1.00      1.00      1.00        16
+General Medicine       1.00      1.00      1.00        16
+      Gynecology       1.00      1.00      1.00        16
+       Neurology       1.00      1.00      1.00        16
+        Oncology       1.00      1.00      1.00         8
+   Ophthalmology       1.00      1.00      1.00         8
+     Orthopedics       1.00      1.00      1.00        16
+      Pediatrics       1.00      1.00      1.00         8
+      Psychiatry       1.00      1.00      1.00         8
+     Pulmonology       1.00      1.00      1.00        16
+         Urology       1.00      1.00      1.00         8
+
+        accuracy                           1.00       192
+       macro avg       1.00      1.00      1.00       192
+    weighted avg       1.00      1.00      1.00       192

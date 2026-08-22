@@ -71,17 +71,25 @@ export default function LabOrderPanel({ patient, visitId }: LabOrderPanelProps) 
   };
 
   const handleOrder = async () => {
-    if (selectedTests.length === 0) return;
+    let testsToOrder = [...selectedTests];
+    if (customTest.trim() && !testsToOrder.includes(customTest.trim())) {
+      testsToOrder.push(customTest.trim());
+    }
+    if (testsToOrder.length === 0) {
+      toast.error('Please select or type at least one lab test');
+      return;
+    }
     setIsOrdering(true);
     try {
       await api.orderLabs({
         visit_id: visitId,
         patient_id: patientId,
-        tests: selectedTests,
+        tests: testsToOrder,
         urgency
       });
-      toast.success(`${selectedTests.length} tests ordered successfully`);
+      toast.success(`${testsToOrder.length} test(s) ordered successfully`);
       setSelectedTests([]);
+      setCustomTest('');
       queryClient.invalidateQueries({ queryKey: ['patient-record', patientId] });
     } catch (e) {
       toast.error('Failed to order lab tests');
@@ -89,6 +97,8 @@ export default function LabOrderPanel({ patient, visitId }: LabOrderPanelProps) 
       setIsOrdering(false);
     }
   };
+
+  const hasTests = selectedTests.length > 0 || customTest.trim().length > 0;
 
   return (
     <div className="p-8 bg-[#FAFAFA]">
@@ -235,7 +245,7 @@ export default function LabOrderPanel({ patient, visitId }: LabOrderPanelProps) 
 
         <button
           onClick={handleOrder}
-          disabled={selectedTests.length === 0 || isOrdering}
+          disabled={!hasTests || isOrdering}
           className="w-full bg-[#1B6CA8] hover:bg-[#154360] text-white py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-blue-900/10 transition-all disabled:opacity-50"
         >
           {isOrdering ? (
@@ -243,7 +253,7 @@ export default function LabOrderPanel({ patient, visitId }: LabOrderPanelProps) 
           ) : (
             <>
               <Check size={20} />
-              <span>Order {selectedTests.length} Tests</span>
+              <span>Order {selectedTests.length > 0 ? `${selectedTests.length} ` : ''}Tests</span>
             </>
           )}
         </button>

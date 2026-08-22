@@ -35,6 +35,20 @@ export default function ReferralPanel({ patient, visitId, symptoms, diagnoses }:
     h.name.toLowerCase().includes(hospitalSearch.toLowerCase())
   );
 
+  // Check exact specialist availability and alternative recommendations
+  const { data: specialistCheck, isLoading: isCheckingSpecialist } = useQuery({
+    queryKey: ['checkSpecialistReferral', toHospital, speciality, reason],
+    queryFn: () => generalApi.get('/appointments/check-specialist', {
+      params: {
+        hospital_name: toHospital,
+        specialty: speciality,
+        complaint: reason || symptoms || ''
+      }
+    }).then(r => r.data),
+    enabled: !!toHospital && !!speciality,
+    staleTime: 30 * 1000,
+  });
+
   // Close dropdown on outside click
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -219,8 +233,78 @@ export default function ReferralPanel({ patient, visitId, symptoms, diagnoses }:
           </div>
           {toHospital && (
             <p className="text-xs text-green-600 font-semibold px-1 flex items-center gap-1">
-              <Check size={12} /> Selected: {toHospital}
+              <Check size={12} /> Selected Facility: {toHospital}
             </p>
+          )}
+
+          {/* Specialist Unavailable Warning Banner & Alternative Hospital Recommendations */}
+          {toHospital && specialistCheck && !specialistCheck.specialist_available && (
+            <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-4 my-3 shadow-xs">
+              <div className="flex items-center gap-2 text-amber-900 font-bold text-xs mb-1">
+                <AlertTriangle size={16} className="text-amber-600 flex-shrink-0" />
+                <span>Specialist Not Available at {toHospital}</span>
+              </div>
+              <p className="text-xs text-amber-800 mb-3 leading-relaxed">
+                {specialistCheck.message || `No ${speciality} specialist is currently available or registered at ${toHospital}.`}
+              </p>
+
+              {specialistCheck.recommended_hospitals && specialistCheck.recommended_hospitals.length > 0 ? (
+                <div>
+                  <p className="text-[11px] font-bold text-amber-900 mb-2 uppercase tracking-wider flex items-center gap-1.5">
+                    <Stethoscope size={13} className="text-amber-700" />
+                    <span>Recommended Facilities with {speciality} Specialist:</span>
+                  </p>
+                  <div className="space-y-2">
+                    {specialistCheck.recommended_hospitals.map((alt: any) => (
+                      <div
+                        key={alt.hospital_name}
+                        className="flex items-center justify-between bg-white p-3 rounded-xl border border-amber-200 shadow-xs hover:border-[#1B6CA8] transition-all"
+                      >
+                        <div>
+                          <p className="text-xs font-bold text-gray-800">{alt.hospital_name}</p>
+                          <p className="text-[11px] text-gray-500">
+                            <span className="font-semibold text-teal-700">{alt.available_doctor_name}</span> ({alt.specialty}) • {alt.district || 'Chennai'}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSelectHospital(alt.hospital_name)}
+                          className="bg-[#1B6CA8] hover:bg-[#155A8A] text-white text-xs px-3 py-1.5 rounded-lg font-bold transition-all shadow-sm flex items-center gap-1"
+                        >
+                          <span>Select Hospital</span>
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-amber-700 italic">
+                  No alternative network facilities with a dedicated {speciality} specialist were found. If submitted, the patient will be routed to {toHospital}'s General Medical team.
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Specialist Available Verified Indicator */}
+          {toHospital && specialistCheck && specialistCheck.specialist_available && (
+            <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3 my-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Check size={16} className="text-emerald-600 flex-shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-emerald-900">
+                    {speciality} Specialist Available
+                  </p>
+                  {specialistCheck.available_doctors && specialistCheck.available_doctors.length > 0 && (
+                    <p className="text-[11px] text-emerald-700">
+                      Verified Doctor: {specialistCheck.available_doctors[0].name} ({specialistCheck.available_doctors[0].qualification || 'MBBS'})
+                    </p>
+                  )}
+                </div>
+              </div>
+              <span className="text-[10px] font-bold uppercase bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-md">
+                Verified
+              </span>
+            </div>
           )}
         </div>
 

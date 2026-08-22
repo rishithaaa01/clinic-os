@@ -96,12 +96,19 @@ export default function QueueCard({ patient, isSelected, onClick, position }: Qu
           </span>
         </div>
 
-        <div className={`
-          flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-tight
-          ${isRejected ? 'bg-red-50 text-red-600' : patient.appointment_type === 'referred' ? 'bg-blue-50 text-[#1B6CA8]' : 'bg-gray-50 text-[#888]'}
-        `}>
-          {getAppointmentIcon()}
-          {isRejected ? 'Rejected' : patient.appointment_type === 'referred' ? `via ${patient.referred_by || 'ASHA'}` : patient.appointment_type}
+        <div className="flex items-center gap-1.5">
+          {(() => {
+            const st = patient.source_type || (patient.appointment_type === 'referred' ? 'ASHA_REFERRAL' : 'WALK_IN');
+            if (st === 'DIRECT_APPOINTMENT') {
+              return <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase tracking-tight">DIRECT APPOINTMENT</span>;
+            } else if (st === 'ASHA_REFERRAL') {
+              return <span className="bg-purple-100 text-purple-800 text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase tracking-tight">ASHA REFERRAL</span>;
+            } else if (st === 'DOCTOR_REFERRAL') {
+              return <span className="bg-blue-100 text-blue-800 text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase tracking-tight">DOCTOR REFERRAL</span>;
+            } else {
+              return <span className="bg-gray-100 text-gray-800 text-[10px] font-extrabold px-2.5 py-1 rounded-lg uppercase tracking-tight">WALK-IN</span>;
+            }
+          })()}
         </div>
       </div>
     </div>

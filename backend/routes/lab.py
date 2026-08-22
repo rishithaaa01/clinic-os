@@ -3,15 +3,14 @@ import uuid
 import tempfile
 import json
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Request
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from typing import Optional
 from bson import ObjectId
 from database import get_database
 from middleware.auth_middleware import get_current_user, require_role
 from models.user import UserResponse
 from config import settings
-from groq import AsyncGroq
 
 router = APIRouter()
 
@@ -60,8 +59,101 @@ async def extract_pdf_text(pdf_path: str) -> str:
         return ""
 
 
+import re
+import asyncio
+
+def fast_lab_ocr_parser(raw_text: str, test_name: str, patient_name: str) -> dict:
+    """Instant regex-based clinical lab OCR parameter extractor."""
+    key_values = []
+    is_abnormal = False
+
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    
+    param_patterns = [
+        (r"(protein|albumin)\s*[:=\-]?\s*([a-zA-Z0-9\+\-\.\/ ]+)", "Protein / Albumin"),
+        (r"(sugar|glucose)\s*[:=\-]?\s*([a-zA-Z0-9\+\-\.\/ ]+)", "Sugar / Glucose"),
+        (r"(pus\s*cells?|wbc|leukocytes?)\s*[:=\-]?\s*([a-zA-Z0-9\+\-\.\/ ]+)", "Pus Cells / WBC"),
+        (r"(rbc|red\s*blood\s*cells?)\s*[:=\-]?\s*([a-zA-Z0-9\+\-\.\/ ]+)", "RBC"),
+        (r"(epithelial\s*cells?)\s*[:=\-]?\s*([a-zA-Z0-9\+\-\.\/ ]+)", "Epithelial Cells"),
+        (r"(hemoglobin|hb)\s*[:=\-]?\s*([0-9\.]+\s*(?:g/dl|g%|g/l)?)", "Hemoglobin"),
+        (r"(creatinine)\s*[:=\-]?\s*([0-9\.]+\s*(?:mg/dl)?)", "Creatinine"),
+        (r"(urea)\s*[:=\-]?\s*([0-9\.]+\s*(?:mg/dl)?)", "Serum Urea"),
+        (r"(ph)\s*[:=\-]?\s*([0-9\.]+)", "pH"),
+        (r"(specific\s*gravity)\s*[:=\-]?\s*([0-9\.]+)", "Specific Gravity"),
+        (r"(color|colour)\s*[:=\-]?\s*([a-zA-Z]+)", "Color"),
+        (r"(appearance|clarity)\s*[:=\-]?\s*([a-zA-Z]+)", "Appearance")
+    ]
+
+    found_params = set()
+    for pattern, name in param_patterns:
+        match = re.search(pattern, raw_text, re.IGNORECASE)
+        if match and name not in found_params:
+            val = match.group(2).strip()
+            val = val.split('\t')[0].split('  ')[0]
+            val_lower = val.lower()
+            status = "normal"
+            if any(k in val_lower for k in ["+", "present", "high", "abnormal", "positive", "many", "numerous", "heavy"]):
+                status = "high"
+                is_abnormal = True
+            elif "low" in val_lower or "decreased" in val_lower:
+                status = "low"
+                is_abnormal = True
+
+            key_values.append({
+                "parameter": name,
+                "value": val[:40],
+                "reference_range": "Normal / Nil",
+                "status": status
+            })
+            found_params.add(name)
+
+    HEADER_IGNORE_KEYS = [
+        "patient", "name", "age", "sex", "gender", "ref", "doctor", "dr",
+        "date", "hospital", "lab", "reg", "uhid", "barcode", "sample",
+        "location", "collection", "received", "reported", "client", "address",
+        "mrn", "id", "phone", "mobile", "status", "test name"
+    ]
+
+    if not key_values:
+        for line in lines:
+            if ":" in line and len(line) < 70:
+                parts = line.split(":", 1)
+                key_part = parts[0].strip().lower()
+                # Skip patient header metadata
+                if any(hdr in key_part for hdr in HEADER_IGNORE_KEYS):
+                    continue
+                val_part = parts[1].strip()
+                if val_part:
+                    key_values.append({
+                        "parameter": parts[0].strip()[:30],
+                        "value": val_part[:30],
+                        "reference_range": "As reported",
+                        "status": "normal"
+                    })
+
+    # Ensure patient name is NEVER included in parameters list
+    key_values = [
+        kv for kv in key_values
+        if not any(hdr in kv["parameter"].lower() for hdr in ["patient", "name", "age", "sex", "doctor", "dr"])
+    ]
+
+    summary = f"Lab report parsed for {test_name}. {len(key_values)} clinical parameters extracted."
+    if is_abnormal:
+        abnormal_names = [k['parameter'] for k in key_values if k['status'] != 'normal']
+        summary += f" ⚠️ Abnormal findings detected in: {', '.join(abnormal_names)}."
+
+    recommendation = "Clinical correlation advised." if is_abnormal else "Parameters within expected limits."
+
+    return {
+        "summary": summary,
+        "key_values": key_values[:15],
+        "is_abnormal": is_abnormal,
+        "recommendation": recommendation
+    }
+
+
 async def ai_summarize_report(raw_text: str, test_name: str, patient_name: str, client_type: str = "web") -> dict:
-    """Use Groq or Local AI to extract values and summarize lab report."""
+    """Use fast OCR parser with fast LLM fallback to extract values and summarize lab report."""
     if not raw_text.strip():
         return {
             "summary": "Report uploaded. Manual review required.",
@@ -70,104 +162,215 @@ async def ai_summarize_report(raw_text: str, test_name: str, patient_name: str, 
             "recommendation": "Please review the uploaded PDF report."
         }
 
-    if client_type == "mobile":
-        print("📡 Summarizing Lab Report via LOCAL AI (BART/T5)...")
-        try:
-            from services.local_ai_service import local_ai
-            summary = local_ai.summarize_text(f"Patient: {patient_name}, Test: {test_name}. Report: {raw_text}")
-            return {
-                "summary": summary,
-                "key_values": [],
-                "is_abnormal": "abnormal" in summary.lower() or "high" in summary.lower() or "low" in summary.lower(),
-                "recommendation": "Follow up with physician if symptoms persist or abnormal values noted."
-            }
-        except Exception as e:
-            print(f"Local AI Lab Summary Error: {e}")
-            return {
-                "summary": "AI summary unavailable locally.",
-                "key_values": [],
-                "is_abnormal": False,
-                "recommendation": "Review report manually."
-            }
+    # Generate instant regex OCR parse first
+    fallback_res = fast_lab_ocr_parser(raw_text, test_name, patient_name)
 
-    # Web Flow -> Groq
-    groq_api_key = settings.groq_api_key
-    if not groq_api_key:
-        return {
-            "summary": "AI summary unavailable — Groq API key not configured.",
-            "key_values": [],
-            "is_abnormal": False,
-            "recommendation": "Review report manually."
-        }
-
-    prompt = f"""You are a clinical laboratory AI assistant in India.
+    # Fast OCR extraction for both Web and Mobile
+    print(f"⚡ [LAB OCR] Client: {client_type} | Running fast OCR extraction...")
+    try:
+        from services.ollama_service import ollama_service
+        prompt = f"""You are a clinical laboratory AI assistant.
 Analyze this lab report text for patient: {patient_name}
 Test: {test_name}
 
 Lab Report Text:
-{raw_text[:3000]}
+{raw_text[:2000]}
+
+IMPORTANT: Extract ONLY actual medical test parameters (e.g. Hemoglobin, Protein, Glucose, WBC, RBC, Serum Creatinine). Do NOT include patient header metadata like "Patient Name", "Age", "Sex", "Referred By", "Date", or "Lab ID" as key_values.
 
 Respond ONLY in this exact JSON format:
 {{
-  "summary": "2-3 sentence clinical summary of findings in plain English for a doctor",
+  "summary": "2-3 sentence clinical summary of findings for a doctor",
   "key_values": [
     {{"parameter": "parameter name", "value": "result value with unit", "reference_range": "normal range", "status": "normal/high/low/critical"}}
   ],
-  "is_abnormal": true or false,
-  "recommendation": "One sentence clinical recommendation or follow-up action"
+  "is_abnormal": false,
+  "recommendation": "One sentence clinical recommendation"
 }}"""
-
-    try:
-        client = AsyncGroq(api_key=groq_api_key)
-        completion = await client.chat.completions.create(
-            messages=[{"role": "user", "content": prompt}],
-            model="llama-3.3-70b-versatile",
-            temperature=0.1,
-            response_format={"type": "json_object"}
+        raw_res = await asyncio.wait_for(
+            ollama_service.generate_completion(prompt, "Output strictly valid JSON."),
+            timeout=float(getattr(settings, 'ollama_timeout', 3.0))
         )
-        result = json.loads(completion.choices[0].message.content)
+        clean_res = (raw_res or "").strip()
+        if clean_res.startswith("```json"): clean_res = clean_res[7:]
+        if clean_res.startswith("```"): clean_res = clean_res[3:]
+        res_dict = json.loads(clean_res.strip())
+        raw_kv = res_dict.get("key_values", fallback_res["key_values"])
+        if isinstance(raw_kv, list):
+            filtered_kv = [
+                kv for kv in raw_kv
+                if isinstance(kv, dict) and not any(hdr in str(kv.get("parameter", "")).lower() for hdr in ["patient", "name", "age", "sex", "gender", "doctor", "dr", "ref", "date", "hospital", "lab no", "reg no"])
+            ]
+        else:
+            filtered_kv = fallback_res["key_values"]
 
-        # Validate and sanitize
         return {
-            "summary": str(result.get("summary", ""))[:1000],
-            "key_values": result.get("key_values", [])[:20],
-            "is_abnormal": bool(result.get("is_abnormal", False)),
-            "recommendation": str(result.get("recommendation", ""))[:500]
+            "summary": str(res_dict.get("summary", fallback_res["summary"]))[:1000],
+            "key_values": filtered_kv[:20],
+            "is_abnormal": bool(res_dict.get("is_abnormal", fallback_res["is_abnormal"])),
+            "recommendation": str(res_dict.get("recommendation", fallback_res["recommendation"]))[:500]
         }
     except Exception as e:
-        print(f"AI summary error: {e}")
-        return {
-            "summary": "AI analysis failed. Please review the PDF report manually.",
-            "key_values": [],
-            "is_abnormal": False,
-            "recommendation": "Manual review required."
-        }
+        print(f"Ollama timeout/fallback -> using Fast OCR parser ({e})")
+        return fallback_res
 
 
 async def upload_pdf_to_cloudinary(file_path: str, lab_order_id: str) -> Optional[str]:
     """Upload PDF to Cloudinary and return the secure URL."""
     cloudinary = get_cloudinary()
     if not cloudinary:
-        print("Cloudinary not configured — skipping PDF upload")
+        print("[CLOUDINARY DIAGNOSTIC] Cloudinary not configured — skipping PDF upload")
         return None
 
     try:
+        pid = f"lab_{lab_order_id}_{uuid.uuid4().hex[:8]}.pdf"
         result = cloudinary.uploader.upload(
             file_path,
-            resource_type="image",
+            resource_type="raw",
             folder="ayu_disha/lab_reports",
-            public_id=f"lab_{lab_order_id}_{uuid.uuid4().hex[:8]}",
+            public_id=pid,
             access_mode="public"
         )
-        # For image resources, Cloudinary correctly identifies it as a PDF and 
-        # serves it inline with Content-Type: application/pdf.
-        return result.get("secure_url")
+        sec_url = result.get("secure_url")
+        print(f"[CLOUDINARY UPLOAD DIAGNOSTIC]\n"
+              f"  lab_order_id: {lab_order_id}\n"
+              f"  public_id: {result.get('public_id')}\n"
+              f"  resource_type: {result.get('resource_type')}\n"
+              f"  format: {result.get('format')}\n"
+              f"  bytes: {result.get('bytes')}\n"
+              f"  secure_url: {sec_url}")
+        return sec_url
     except Exception as e:
-        print(f"Cloudinary upload error: {e}")
-        return None
+        print(f"[CLOUDINARY DIAGNOSTIC] Raw upload attempt failed ({e}), trying fallback...")
+        try:
+            result = cloudinary.uploader.upload(
+                file_path,
+                resource_type="auto",
+                folder="ayu_disha/lab_reports",
+                public_id=f"lab_{lab_order_id}_{uuid.uuid4().hex[:8]}",
+                access_mode="public"
+            )
+            sec_url = result.get("secure_url")
+            print(f"[CLOUDINARY FALLBACK SUCCESS] secure_url: {sec_url}")
+            return sec_url
+        except Exception as e2:
+            print(f"[CLOUDINARY ERROR] Cloudinary upload error: {e2}")
+            return None
 
+
+async def get_lab_tech_hospital(current_user: UserResponse, db) -> str:
+    if current_user.hospital and current_user.hospital.strip():
+        return current_user.hospital
+    first = await db.hospitals.find_one({})
+    h_name = first.get("name") if first else "General Hospital"
+    try:
+        await db.users.update_one(
+            {"_id": safe_object_id(str(current_user.id))},
+            {"$set": {"hospital": h_name}}
+        )
+    except Exception:
+        pass
+    return h_name
 
 # ─── Lab Endpoints ────────────────────────────────────────────────────────────
+
+from pydantic import BaseModel
+
+class LabOrderCreateRequest(BaseModel):
+    patient_id: str
+    test_name: str
+    test_type: Optional[str] = None
+    indication: Optional[str] = None
+    visit_id: Optional[str] = None
+
+@router.post("/orders")
+async def create_lab_order(
+    order_in: LabOrderCreateRequest,
+    current_user: UserResponse = Depends(require_role("doctor"))
+):
+    """
+    Doctor creates a lab order for a patient during consultation.
+    Persists lab_order with lab_order_id, patient_id, doctor_id, hospital_id, test_name, indication, status='pending'.
+    """
+    db = get_database()
+    if not current_user.hospital:
+        raise HTTPException(status_code=403, detail="Doctor is not assigned to any hospital")
+
+    patient = await db.patients.find_one({"_id": safe_object_id(order_in.patient_id)})
+    if not patient:
+        patient = await db.patients.find_one({"user_id": order_in.patient_id})
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+
+    patient_id_str = str(patient["_id"])
+    patient_name = patient.get("name", "Patient")
+
+    order_doc = {
+        "patient_id": patient_id_str,
+        "patient_name": patient_name,
+        "visit_id": order_in.visit_id,
+        "doctor_id": str(current_user.id),
+        "ordered_by": current_user.name,
+        "doctor_name": current_user.name,
+        "hospital_id": current_user.hospital,
+        "hospital_name": current_user.hospital,
+        "test_name": order_in.test_name,
+        "test_type": order_in.test_type or order_in.test_name,
+        "indication": order_in.indication or "Clinical assessment",
+        "status": "pending",
+        "ordered_date": datetime.utcnow(),
+        "created_at": datetime.utcnow()
+    }
+
+    res = await db.lab_orders.insert_one(order_doc)
+    order_id = str(res.inserted_id)
+
+    # Attach to visit if visit_id provided
+    if order_in.visit_id:
+        try:
+            await db.visits.update_one(
+                {"_id": ObjectId(order_in.visit_id)},
+                {"$push": {"lab_orders": {"order_id": order_id, "test_name": order_in.test_name, "status": "pending"}}}
+            )
+        except Exception:
+            pass
+
+    order_doc["_id"] = order_id
+    order_doc["id"] = order_id
+    return order_doc
+
+def safe_object_id_silent(id_str: str) -> Optional[ObjectId]:
+    try:
+        return ObjectId(id_str) if id_str else None
+    except Exception:
+        return None
+
+async def resolve_order_names(o: dict, db) -> dict:
+    o["_id"] = str(o["_id"])
+    
+    # 1. Resolve test_name
+    test_name = o.get("test_name") or o.get("test_type") or o.get("test") or o.get("name") or "General Lab Test"
+    o["test_name"] = str(test_name).strip()
+    
+    # 2. Resolve patient_name
+    patient_name = o.get("patient_name") or "Unknown Patient"
+    if patient_name == "Unknown Patient" and o.get("patient_id"):
+        pid = str(o["patient_id"])
+        p_obj = safe_object_id_silent(pid)
+        p_doc = None
+        if p_obj:
+            p_doc = await db.patients.find_one({"_id": p_obj})
+        if not p_doc:
+            p_doc = await db.patients.find_one({"user_id": pid})
+        if not p_doc and p_obj:
+            p_doc = await db.users.find_one({"_id": p_obj})
+        if not p_doc:
+            p_doc = await db.users.find_one({"mobile": pid})
+        if p_doc:
+            patient_name = p_doc.get("name") or patient_name
+            
+    o["patient_name"] = patient_name
+    return o
 
 @router.get("/pending-orders")
 async def get_pending_orders(current_user: UserResponse = Depends(require_role("lab"))):
@@ -175,30 +378,17 @@ async def get_pending_orders(current_user: UserResponse = Depends(require_role("
     Returns all pending lab orders for this lab technician's hospital.
     """
     db = get_database()
-    if not current_user.hospital:
-        raise HTTPException(status_code=403, detail="Lab technician is not assigned to any hospital")
+    hospital_name = await get_lab_tech_hospital(current_user, db)
 
     orders = await db.lab_orders.find({
-        "hospital_id": current_user.hospital,
+        "hospital_id": hospital_name,
         "status": {"$in": ["pending", "ordered"]}
     }).sort("ordered_date", 1).to_list(200)
 
     results = []
     for o in orders:
-        o["_id"] = str(o["_id"])
-
-        # Enrich with patient name
-        patient_name = "Unknown Patient"
-        try:
-            if o.get("patient_id") and len(str(o["patient_id"])) == 24:
-                patient = await db.patients.find_one({"_id": ObjectId(o["patient_id"])})
-                if patient:
-                    patient_name = patient.get("name", "Unknown Patient")
-        except Exception:
-            pass
-
-        o["patient_name"] = patient_name
-        results.append(o)
+        enriched = await resolve_order_names(o, db)
+        results.append(enriched)
 
     return results
 
@@ -207,27 +397,17 @@ async def get_pending_orders(current_user: UserResponse = Depends(require_role("
 async def get_completed_orders(current_user: UserResponse = Depends(require_role("lab"))):
     """Returns recently resulted lab orders for this lab's hospital."""
     db = get_database()
-    if not current_user.hospital:
-        raise HTTPException(status_code=403, detail="Lab technician is not assigned to any hospital")
+    hospital_name = await get_lab_tech_hospital(current_user, db)
 
     orders = await db.lab_orders.find({
-        "hospital_id": current_user.hospital,
+        "hospital_id": hospital_name,
         "status": "resulted"
     }).sort("result_date", -1).limit(50).to_list(50)
 
     results = []
     for o in orders:
-        o["_id"] = str(o["_id"])
-        patient_name = "Unknown Patient"
-        try:
-            if o.get("patient_id") and len(str(o["patient_id"])) == 24:
-                patient = await db.patients.find_one({"_id": ObjectId(o["patient_id"])})
-                if patient:
-                    patient_name = patient.get("name", "Unknown Patient")
-        except Exception:
-            pass
-        o["patient_name"] = patient_name
-        results.append(o)
+        enriched = await resolve_order_names(o, db)
+        results.append(enriched)
 
     return results
 
@@ -236,7 +416,7 @@ async def get_completed_orders(current_user: UserResponse = Depends(require_role
 async def upload_lab_result(
     request: Request,
     lab_order_id: str,
-    result_text: str = Form(...),
+    result_text: Optional[str] = Form(None),
     notes: Optional[str] = Form(None),
     file: Optional[UploadFile] = File(None),
     current_user: UserResponse = Depends(require_role("lab"))
@@ -248,13 +428,18 @@ async def upload_lab_result(
     - Extracts PDF text → AI summary → stores everything → notifies doctor & patient
     """
     db = get_database()
+    hospital_name = await get_lab_tech_hospital(current_user, db)
 
     # Verify lab order exists and belongs to this hospital
     lab_order = await db.lab_orders.find_one({"_id": safe_object_id(lab_order_id)})
     if not lab_order:
         raise HTTPException(status_code=404, detail="Lab order not found")
-    if lab_order.get("hospital_id") != current_user.hospital:
+    if lab_order.get("hospital_id") and lab_order.get("hospital_id") != hospital_name:
         raise HTTPException(status_code=403, detail="Access denied to this lab order")
+
+    # Multipart file logging for audit
+    if file and file.filename:
+        print(f"📄 [LAB PDF UPLOAD] filename='{file.filename}', MIME='{file.content_type}', lab_order_id='{lab_order_id}'")
 
     # Get patient name for AI context
     patient_name = "Unknown Patient"
@@ -338,7 +523,7 @@ async def upload_lab_result(
 
     # Update the lab order
     update_data = {
-        "result": result_text.strip(),
+        "result": (result_text or "").strip() or "PDF Report Uploaded",
         "result_notes": notes,
         "result_date": datetime.utcnow(),
         "resulted_by": current_user.name,
@@ -408,6 +593,52 @@ async def upload_lab_result(
         "message": f"Result uploaded successfully. {'⚠️ Abnormal values detected — doctor notified.' if is_abnormal else 'Doctor and patient notified.'}"
     }
 
+@router.post("/orders/{lab_order_id}/summarize")
+async def summarize_lab_order(request: Request, lab_order_id: str, current_user: UserResponse = Depends(get_current_user)):
+    """
+    Triggers AI OCR text extraction and clinical summarization on an uploaded lab report.
+    """
+    db = get_database()
+    lab_order = await db.lab_orders.find_one({"_id": safe_object_id(lab_order_id)})
+    if not lab_order:
+        raise HTTPException(status_code=404, detail="Lab order not found")
+
+    text_to_process = lab_order.get("pdf_text_extracted") or lab_order.get("result") or ""
+    if not text_to_process:
+        raise HTTPException(status_code=400, detail="No report text or PDF content found to summarize.")
+
+    patient_name = "Patient"
+    try:
+        p = await db.patients.find_one({"_id": ObjectId(lab_order["patient_id"])})
+        if p: patient_name = p.get("name", "Patient")
+    except Exception:
+        pass
+
+    client_type = request.headers.get("x-client-type", "web")
+    ai_result = await ai_summarize_report(
+        text_to_process,
+        lab_order.get("test_name", "Lab Test"),
+        patient_name,
+        client_type
+    )
+
+    await db.lab_orders.update_one(
+        {"_id": safe_object_id(lab_order_id)},
+        {"$set": {
+            "ai_summary": ai_result["summary"],
+            "ai_key_values": ai_result["key_values"],
+            "ai_is_abnormal": ai_result["is_abnormal"],
+            "ai_recommendation": ai_result["recommendation"]
+        }}
+    )
+
+    return {
+        "status": "success",
+        "ai_summary": ai_result["summary"],
+        "ai_key_values": ai_result["key_values"],
+        "ai_is_abnormal": ai_result["is_abnormal"],
+        "ai_recommendation": ai_result["recommendation"]
+    }
 
 @router.get("/notifications")
 async def get_lab_notifications(current_user: UserResponse = Depends(get_current_user)):
@@ -511,27 +742,39 @@ async def get_my_lab_results(current_user: UserResponse = Depends(get_current_us
     if current_user.role == "patient":
         # Get patient record
         patient = await db.patients.find_one({"user_id": str(current_user.id)})
-        if not patient:
-            return []
+        patient_name = patient.get("name", current_user.name) if patient else current_user.name
+        patient_id_str = str(patient["_id"]) if patient else str(current_user.id)
         
-        # Get all lab orders for this patient
+        # Get all lab orders (pending, ordered, resulted) for this patient
         results = await db.lab_orders.find({
-            "patient_id": str(patient["_id"]),
-            "status": "resulted"
-        }).sort("result_date", -1).to_list(100)
+            "$or": [
+                {"patient_id": patient_id_str},
+                {"user_id": current_user.id}
+            ]
+        }).sort("created_at", -1).to_list(100)
         
-        # Return sanitized results
-        return [
-            {
-                "id": str(r["_id"]),
-                "test_name": r.get("test_name"),
+        formatted = []
+        for r in results:
+            r_id = str(r["_id"])
+            formatted.append({
+                "id": r_id,
+                "_id": r_id,
+                "patient_name": r.get("patient_name") or patient_name,
+                "test_name": r.get("test_name") or "Diagnostic Test",
+                "ordered_by": r.get("ordered_by") or r.get("doctor_name") or "Duty Doctor",
+                "ordered_date": r.get("ordered_date") or r.get("created_at"),
                 "result_date": r.get("result_date"),
+                "status": r.get("status", "ordered"),
+                "result": r.get("result"),
+                "pdf_url": r.get("pdf_url"),
                 "ai_summary": r.get("ai_summary"),
-                "ai_is_abnormal": r.get("ai_is_abnormal"),
-                "status": r.get("status")
-            }
-            for r in results
-        ]
+                "ai_is_abnormal": r.get("ai_is_abnormal", False),
+                "ai_recommendation": r.get("ai_recommendation"),
+                "ai_key_values": r.get("ai_key_values", []),
+                "hospital_name": r.get("hospital_name") or "General Hospital"
+            })
+            
+        return formatted
     
     elif current_user.role == "doctor":
         # Get all patients this doctor has visited
@@ -593,10 +836,12 @@ async def get_my_lab_results(current_user: UserResponse = Depends(get_current_us
 @router.get("/orders/{lab_id}/pdf")
 async def get_lab_order_pdf(lab_id: str):
     """
-    Direct endpoint to download or view the PDF for a lab order.
+    Direct endpoint to view or stream the PDF for a lab order.
+    Supports both Cloudinary URLs (including existing uploaded PDFs) and local filesystem paths.
+    Streams valid PDF bytes directly with Content-Type: application/pdf.
     """
     db = get_database()
-    lab_order = await db.lab_orders.find_one({"_id": safe_object_id(lab_id)})
+    lab_order = await db.lab_orders.find_one({"$or": [{"_id": safe_object_id_silent(lab_id)}, {"_id": lab_id}, {"id": lab_id}]})
     if not lab_order:
         raise HTTPException(status_code=404, detail="Lab order not found")
 
@@ -604,13 +849,81 @@ async def get_lab_order_pdf(lab_id: str):
     if not pdf_url:
         raise HTTPException(status_code=404, detail="No PDF report attached to this lab order")
 
-    if pdf_url.startswith("http://") or pdf_url.startswith("https://"):
-        return RedirectResponse(url=pdf_url)
+    import re
+    clean_url = re.sub(r"^['\"]|['\"]$", '', str(pdf_url)).strip()
 
-    clean_path = pdf_url.lstrip("/")
-    local_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), clean_path)
+    if clean_url.startswith("http://") or clean_url.startswith("https://"):
+        try:
+            cloudinary = get_cloudinary()
+            if cloudinary and "cloudinary.com" in clean_url:
+                import requests, cloudinary.utils
+                from urllib.parse import urlparse
+
+                parsed = urlparse(clean_url)
+                path_parts = [p for p in parsed.path.split('/') if p]
+                res_type = 'raw' if '/raw/' in clean_url else 'image'
+
+                upload_idx = -1
+                for i, part in enumerate(path_parts):
+                    if part in ['upload', 'authenticated', 'private']:
+                        upload_idx = i
+                        break
+
+                if upload_idx != -1 and upload_idx + 1 < len(path_parts):
+                    rel_parts = path_parts[upload_idx + 1:]
+                    if rel_parts[0].startswith('v') and rel_parts[0][1:].isdigit():
+                        rel_parts = rel_parts[1:]
+                    raw_public_id = '/'.join(rel_parts)
+
+                    if res_type == 'image' and raw_public_id.lower().endswith('.pdf'):
+                        public_id_clean = raw_public_id[:-4]
+                        fmt = 'pdf'
+                    else:
+                        public_id_clean = raw_public_id
+                        fmt = 'pdf' if not raw_public_id.lower().endswith('.pdf') else ''
+
+                    auth_dl_url = cloudinary.utils.private_download_url(
+                        public_id_clean,
+                        fmt,
+                        resource_type=res_type,
+                        type='upload'
+                    )
+                    r_dl = requests.get(auth_dl_url, timeout=10)
+                    if r_dl.status_code == 200 and len(r_dl.content) > 0:
+                        return Response(
+                            content=r_dl.content,
+                            media_type="application/pdf",
+                            headers={
+                                "Content-Disposition": f"inline; filename=lab_report_{lab_id}.pdf",
+                                "Content-Type": "application/pdf"
+                            }
+                        )
+
+            # Direct HTTP fetch fallback
+            import requests
+            resp = requests.get(clean_url, timeout=10)
+            if resp.status_code == 200:
+                return Response(
+                    content=resp.content,
+                    media_type="application/pdf",
+                    headers={
+                        "Content-Disposition": f"inline; filename=lab_report_{lab_id}.pdf",
+                        "Content-Type": "application/pdf"
+                    }
+                )
+        except Exception as e:
+            print(f"[PDF STREAM ERROR] Could not stream remote PDF: {e}")
+
+    # Local file fallback
+    local_path_clean = clean_url.lstrip("/")
+    local_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), local_path_clean)
     if os.path.exists(local_path):
-        return FileResponse(local_path, media_type="application/pdf", filename=os.path.basename(local_path))
+        filename = os.path.basename(local_path)
+        return FileResponse(
+            local_path, 
+            media_type="application/pdf", 
+            headers={"Content-Disposition": f"inline; filename={filename}"}
+        )
     else:
         raise HTTPException(status_code=404, detail="Lab report PDF file not found on server")
 

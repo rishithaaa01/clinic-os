@@ -130,8 +130,89 @@ export default function AdminDashboardScreen() {
     return matchesSearch && matchesRole;
   });
 
+  // Doctor Verification State & Query
+  const [rejectDoctorId, setRejectDoctorId] = useState<string | null>(null);
+  const [rejectionReason, setRejectionReason] = useState('');
+
+  const { data: doctorRequests = [], refetch: refetchDocReqs } = useQuery({
+    queryKey: ['adminDoctorRequestsMobile'],
+    queryFn: () => api.get('/admin/doctor-requests').then(r => r.data).catch(() => []),
+    enabled: activeTab === 'doctor-requests' || activeTab === 'overview',
+  });
+
+  const handleApproveDoctor = async (id: string) => {
+    try {
+      const res = await api.post(`/admin/doctor-requests/${id}/approve`);
+      Alert.alert('Success', res.data?.message || 'Doctor approved');
+      queryClient.invalidateQueries({ queryKey: ['adminDoctorRequestsMobile'] });
+      queryClient.invalidateQueries({ queryKey: ['adminUsers'] });
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.detail || 'Failed to approve doctor');
+    }
+  };
+
+  const handleRejectDoctor = async (id: string) => {
+    if (!rejectionReason.trim()) {
+      Alert.alert('Error', 'Please enter a rejection reason.');
+      return;
+    }
+    try {
+      const res = await api.post(`/admin/doctor-requests/${id}/reject`, { rejection_reason: rejectionReason.trim() });
+      Alert.alert('Success', res.data?.message || 'Doctor affiliation rejected');
+      queryClient.invalidateQueries({ queryKey: ['adminDoctorRequestsMobile'] });
+      queryClient.invalidateQueries({ queryKey: ['adminUsers'] });
+      setRejectDoctorId(null);
+      setRejectionReason('');
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.detail || 'Failed to reject doctor');
+    }
+  };
+
+  const pendingDoctorsCount = doctorRequests.filter((d: any) => d.hospital_status === 'PENDING' || d.verification_status === 'PENDING').length;
+
+  // OPD Walk-in State
+  const [walkinForm, setWalkinForm] = useState({
+    patient_name: '', mobile: '', abha_number: '', specialty: 'General Medicine', chief_complaint: 'Routine OPD Walk-In'
+  });
+  const [walkinLoading, setWalkinLoading] = useState(false);
+
+  const handleWalkinSubmit = async (confirmLink = false) => {
+    if (!walkinForm.patient_name.trim() || !walkinForm.mobile.trim()) {
+      Alert.alert('Missing Info', 'Patient name and mobile number are required.');
+      return;
+    }
+    setWalkinLoading(true);
+    try {
+      const res = await api.post('/admin/walkin-register', {
+        ...walkinForm,
+        confirm_link: confirmLink
+      });
+
+      if (res.data.requires_confirmation) {
+        Alert.alert(
+          'Possible Match Found',
+          `${res.data.message}\nDo you want to confirm and link this existing patient profile?`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Confirm & Link', onPress: () => handleWalkinSubmit(true) }
+          ]
+        );
+      } else {
+        Alert.alert('Success', res.data.message || 'Walk-in registered successfully!');
+        setWalkinForm({ patient_name: '', mobile: '', abha_number: '', specialty: 'General Medicine', chief_complaint: 'Routine OPD Walk-In' });
+        queryClient.invalidateQueries({ queryKey: ['adminStats'] });
+      }
+    } catch (err: any) {
+      Alert.alert('Error', err.response?.data?.detail || 'Failed to register walk-in patient.');
+    } finally {
+      setWalkinLoading(false);
+    }
+  };
+
   const tabs = [
     { id: 'overview', label: 'Overview' },
+    { id: 'doctor-requests', label: `Doctor Approvals ${pendingDoctorsCount > 0 ? `(${pendingDoctorsCount})` : ''}` },
+    { id: 'opd-walkin', label: 'OPD Walk-In' },
     { id: 'users', label: 'Users' },
     { id: 'maternal', label: 'Maternal' },
     { id: 'hospitals', label: 'Hospitals' },
@@ -198,17 +279,17 @@ export default function AdminDashboardScreen() {
             ) : (
               <>
                 <View className="flex-row flex-wrap justify-between">
-                  <StatCard title="Total Patients" value={isLoading ? '...' : (stats?.total_patients ?? 1240).toLocaleString()} subtitle="Registered on platform" icon={Users} iconBgClass="bg-blue-100" iconColor="#2563eb" />
-                  <StatCard title="Doctors" value={isLoading ? '...' : (stats?.total_doctors ?? 48)} subtitle="Active clinicians" icon={Activity} iconBgClass="bg-green-100" iconColor="#16a34a" />
-                  <StatCard title="ASHA Workers" value={isLoading ? '...' : (stats?.total_asha_workers ?? 112)} subtitle="Community health workers" icon={ShieldCheck} iconBgClass="bg-purple-100" iconColor="#9333ea" />
-                  <StatCard title="Hospitals" value={isLoading ? '...' : (stats?.total_hospitals ?? 18)} subtitle="Registered facilities" icon={Hospital} iconBgClass="bg-orange-100" iconColor="#ea580c" />
+                  <StatCard title="Total Patients" value={isLoading ? '...' : (stats?.total_patients ?? 0).toLocaleString()} subtitle="Registered on platform" icon={Users} iconBgClass="bg-blue-100" iconColor="#2563eb" />
+                  <StatCard title="Doctors" value={isLoading ? '...' : (stats?.total_doctors ?? 0)} subtitle="Active clinicians" icon={Activity} iconBgClass="bg-green-100" iconColor="#16a34a" />
+                  <StatCard title="ASHA Workers" value={isLoading ? '...' : (stats?.total_asha_workers ?? 0)} subtitle="Community health workers" icon={ShieldCheck} iconBgClass="bg-purple-100" iconColor="#9333ea" />
+                  <StatCard title="Hospitals" value={isLoading ? '...' : (stats?.total_hospitals ?? 0)} subtitle="Registered facilities" icon={Hospital} iconBgClass="bg-orange-100" iconColor="#ea580c" />
                 </View>
 
                 <View className="flex-row flex-wrap justify-between mt-2">
-                  <StatCard title="Visits Today" value={isLoading ? '...' : (stats?.visits_today ?? 86)} subtitle="Consultations completed" icon={CheckCircle} iconBgClass="bg-teal-100" iconColor="#0d9488" />
-                  <StatCard title="Pending Referrals" value={isLoading ? '...' : (stats?.referrals_pending ?? 14)} subtitle="Awaiting acceptance" icon={Clock} iconBgClass="bg-amber-100" iconColor="#d97706" />
-                  <StatCard title="High-Risk Households" value={isLoading ? '...' : (stats?.high_risk_households ?? 42)} subtitle="Flagged by ASHA workers" icon={AlertTriangle} iconBgClass="bg-red-100" iconColor="#dc2626" />
-                  <StatCard title="Active Consents" value={isLoading ? '...' : (stats?.consents_active ?? 94)} subtitle="Patient data access grants" icon={ShieldCheck} iconBgClass="bg-indigo-100" iconColor="#4f46e5" />
+                  <StatCard title="Visits Today" value={isLoading ? '...' : (stats?.visits_today ?? 0)} subtitle="Consultations completed" icon={CheckCircle} iconBgClass="bg-teal-100" iconColor="#0d9488" />
+                  <StatCard title="Pending Referrals" value={isLoading ? '...' : (stats?.referrals_pending ?? 0)} subtitle="Awaiting acceptance" icon={Clock} iconBgClass="bg-amber-100" iconColor="#d97706" />
+                  <StatCard title="High-Risk Households" value={isLoading ? '...' : (stats?.high_risk_households ?? 0)} subtitle="Flagged by ASHA workers" icon={AlertTriangle} iconBgClass="bg-red-100" iconColor="#dc2626" />
+                  <StatCard title="Active Consents" value={isLoading ? '...' : (stats?.consents_active ?? 0)} subtitle="Patient data access grants" icon={ShieldCheck} iconBgClass="bg-indigo-100" iconColor="#4f46e5" />
                 </View>
               </>
             )}
@@ -250,6 +331,77 @@ export default function AdminDashboardScreen() {
                 )}
               </View>
             </View>
+          </View>
+        )}
+
+        {/* Doctor Approvals Tab */}
+        {activeTab === 'doctor-requests' && (
+          <View className="mb-10">
+            <View className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm mb-4">
+              <Text className="font-bold text-gray-800 text-base">Doctor Verification Requests</Text>
+              <Text className="text-xs text-gray-400 mt-0.5">Review medical credentials & hospital affiliation</Text>
+            </View>
+
+            {doctorRequests.length === 0 ? (
+              <View className="py-8 items-center"><Text className="text-gray-400 text-sm">No doctor requests found.</Text></View>
+            ) : (
+              doctorRequests.map((d: any) => (
+                <View key={d.id} className="bg-white rounded-2xl border border-gray-100 p-4 shadow-sm mb-4">
+                  <View className="flex-row justify-between items-start mb-2">
+                    <View className="flex-1 mr-2">
+                      <Text className="font-bold text-gray-800 text-base">{d.name}</Text>
+                      <Text className="text-xs text-gray-400">{d.email} | {d.mobile}</Text>
+                    </View>
+                    <View className="flex-row gap-x-1">
+                      <View className={`px-2 py-0.5 rounded-full ${d.verification_status === 'VERIFIED' ? 'bg-green-100' : 'bg-amber-100'}`}>
+                        <Text className={`text-[9px] font-bold ${d.verification_status === 'VERIFIED' ? 'text-green-700' : 'text-amber-700'}`}>
+                          {d.verification_status}
+                        </Text>
+                      </View>
+                    </View>
+                  </View>
+
+                  <View className="bg-gray-50 rounded-xl p-3 mb-3">
+                    <Text className="text-xs text-gray-600 font-semibold">Reg No: <Text className="font-mono font-bold text-gray-800">{d.medical_registration_number}</Text></Text>
+                    <Text className="text-xs text-gray-500 mt-0.5">Council: {d.medical_council}</Text>
+                    <Text className="text-xs text-gray-500 mt-0.5">Speciality: {d.qualification} — {d.speciality}</Text>
+                    <Text className="text-xs text-[#1B6CA8] font-bold mt-1">Requested Hospital: {d.requested_hospital_id}</Text>
+                  </View>
+
+                  {d.hospital_status === 'APPROVED' ? (
+                    <View className="bg-green-100 py-2 rounded-xl items-center">
+                      <Text className="text-xs font-bold text-green-700">APPROVED & ACTIVE</Text>
+                    </View>
+                  ) : rejectDoctorId === d.id ? (
+                    <View className="space-y-2">
+                      <TextInput
+                        value={rejectionReason}
+                        onChangeText={setRejectionReason}
+                        placeholder="Reason for rejection *"
+                        className="bg-gray-50 border border-red-200 rounded-xl px-3 py-2 text-xs text-gray-800"
+                      />
+                      <View className="flex-row gap-x-2">
+                        <TouchableOpacity onPress={() => handleRejectDoctor(d.id)} className="flex-1 bg-red-600 py-2.5 rounded-xl items-center">
+                          <Text className="text-white text-xs font-bold">Confirm Reject</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => setRejectDoctorId(null)} className="px-4 bg-gray-200 py-2.5 rounded-xl items-center">
+                          <Text className="text-gray-700 text-xs font-bold">Cancel</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ) : (
+                    <View className="flex-row gap-x-2">
+                      <TouchableOpacity onPress={() => handleApproveDoctor(d.id)} className="flex-1 bg-green-600 py-2.5 rounded-xl items-center">
+                        <Text className="text-white text-xs font-bold">Approve</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity onPress={() => setRejectDoctorId(d.id)} className="flex-1 bg-red-100 py-2.5 rounded-xl items-center">
+                        <Text className="text-red-700 text-xs font-bold">Reject</Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </View>
+              ))
+            )}
           </View>
         )}
 
@@ -329,6 +481,61 @@ export default function AdminDashboardScreen() {
                 </View>
               ))
             )}
+          </View>
+        )}
+
+        {/* OPD Walk-In Registration Tab */}
+        {activeTab === 'opd-walkin' && (
+          <View className="space-y-4">
+            <View className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
+              <Text className="text-base font-bold text-gray-800 mb-1">OPD Walk-In Registration</Text>
+              <Text className="text-xs text-gray-400 mb-4">Register walk-in arriving patients directly into the active doctor OPD queue.</Text>
+
+              <Text className="text-xs font-semibold text-gray-700 mb-1">Patient Full Name</Text>
+              <TextInput
+                value={walkinForm.patient_name}
+                onChangeText={(t) => setWalkinForm({ ...walkinForm, patient_name: t })}
+                placeholder="e.g. Ramesh Kumar"
+                className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs mb-3 font-medium"
+              />
+
+              <Text className="text-xs font-semibold text-gray-700 mb-1">Mobile Number</Text>
+              <TextInput
+                value={walkinForm.mobile}
+                onChangeText={(t) => setWalkinForm({ ...walkinForm, mobile: t })}
+                placeholder="e.g. 9876543210"
+                keyboardType="phone-pad"
+                className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs mb-3 font-medium"
+              />
+
+              <Text className="text-xs font-semibold text-gray-700 mb-1">ABHA ID (Optional)</Text>
+              <TextInput
+                value={walkinForm.abha_number}
+                onChangeText={(t) => setWalkinForm({ ...walkinForm, abha_number: t })}
+                placeholder="ABHA-20260815-XXXX"
+                className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs mb-3 font-medium"
+              />
+
+              <Text className="text-xs font-semibold text-gray-700 mb-1">Chief Complaint / Symptoms</Text>
+              <TextInput
+                value={walkinForm.chief_complaint}
+                onChangeText={(t) => setWalkinForm({ ...walkinForm, chief_complaint: t })}
+                placeholder="e.g. Fever, chest pain, cough"
+                className="bg-gray-50 border border-gray-200 rounded-xl p-3 text-xs mb-4 font-medium"
+              />
+
+              <TouchableOpacity
+                onPress={() => handleWalkinSubmit(false)}
+                disabled={walkinLoading}
+                className="bg-[#1B6CA8] p-4 rounded-xl items-center shadow-sm"
+              >
+                {walkinLoading ? (
+                  <ActivityIndicator color="white" />
+                ) : (
+                  <Text className="text-white text-xs font-bold">Register Walk-In & Check In</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         )}
 

@@ -49,22 +49,6 @@ export default function ConsultationScreen() {
   // Tabs State
   const [activeTab, setActiveTab] = useState<'differential' | 'prescription' | 'labs' | 'referral' | 'history'>('differential');
 
-  // AI Hooks
-  const { diagnoses: aiDiagnoses, isLoading: aiLoading } = useDifferential(symptoms, activePatient?.patient_id);
-
-  const { data: patientRecord, isLoading: recordLoading } = useQuery({
-    queryKey: ['patient-record', activePatient?.patient_id],
-    queryFn: () => api.getPatientRecord(activePatient?.patient_id),
-    enabled: !!activePatient?.patient_id
-  });
-
-  const { data: summaryData, isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
-    queryKey: ['patient-summary', activePatient?.patient_id],
-    queryFn: () => api.getPatientSummary(activePatient?.patient_id),
-    enabled: !!activePatient?.patient_id,
-    retry: false,
-  });
-
   // Recover from page refresh — fetch visit by visitId to get patient_id
   const { data: visitData } = useQuery({
     queryKey: ['visit-recovery', visitId],
@@ -87,39 +71,73 @@ export default function ConsultationScreen() {
     }
   }, [visitData, activePatient, setActiveVisitId, visitId]);
 
-  const resolvedPatientId = activePatient?.patient_id || visitData?.patient_id;
+  const resolvedPatientId = activePatient?.patient_id || activePatient?.id || activePatient?._id || visitData?.patient_id;
 
-  const { data: recoveredRecord, isLoading: recoveryLoading } = useQuery({
+  // Auto-populate symptoms from chief complaint if currently empty
+  useEffect(() => {
+    if (!symptoms) {
+      const initComplaint = activePatient?.chief_complaint || visitData?.chief_complaint;
+      if (initComplaint && typeof initComplaint === 'string' && initComplaint.trim()) {
+        setSymptoms(initComplaint.trim());
+      }
+    }
+  }, [activePatient, visitData, symptoms]);
+
+  // AI Hooks
+  const { 
+    diagnoses: aiDiagnoses, 
+    isLoading: aiLoading, 
+    refetch: refetchDifferential 
+  } = useDifferential(symptoms, resolvedPatientId);
+
+  const { data: patientRecord, isLoading: recordLoading } = useQuery({
     queryKey: ['patient-record', resolvedPatientId],
     queryFn: () => api.getPatientRecord(resolvedPatientId),
-    enabled: !!resolvedPatientId && !activePatient,
+    enabled: !!resolvedPatientId
   });
 
-  const effectiveRecord = patientRecord || recoveredRecord;
-  const effectiveLoading = recordLoading || recoveryLoading;
+  const { data: summaryData, isLoading: summaryLoading, refetch: refetchSummary } = useQuery({
+    queryKey: ['patient-summary', resolvedPatientId],
+    queryFn: () => api.getPatientSummary(resolvedPatientId),
+    enabled: !!resolvedPatientId,
+    retry: false,
+  });
+
+  const effectiveRecord = patientRecord;
+  const effectiveLoading = recordLoading;
 
   const handleComplete = async () => {
-    if (diagnosis.length === 0) {
-      toast.error('Please record at least one diagnosis.');
+    const effectiveDiagnoses = diagnosis.length > 0 ? diagnosis : [symptoms || 'General Clinical Evaluation'];
+    const targetVisitId = visitId || activeVisitId || activePatient?.visit_id || activePatient?.id || activePatient?._id;
+
+    if (!targetVisitId) {
+      toast.error('No active visit encounter found to complete.');
       return;
     }
 
     try {
-      await api.updateVisit(visitId!, {
-        diagnosis,
+      await api.updateVisit(targetVisitId, {
+        diagnosis: effectiveDiagnoses,
         notes: findings,
         chief_complaint: symptoms,
       });
-      await api.completeVisit(visitId!);
+      await api.completeVisit(targetVisitId);
       toast.success('Consultation completed and saved!');
       
       await queryClient.invalidateQueries({ queryKey: ['doctorPatients'] });
+      await queryClient.invalidateQueries({ queryKey: ['myPatients'] });
       await queryClient.invalidateQueries({ queryKey: ['doctorReferrals'] });
+      await queryClient.invalidateQueries({ queryKey: ['queue'] });
+      await queryClient.invalidateQueries({ queryKey: ['clinicianQueue'] });
+      await queryClient.invalidateQueries({ queryKey: ['queueSummary'] });
+      await queryClient.invalidateQueries({ queryKey: ['queue-summary'] });
+      await queryClient.invalidateQueries({ queryKey: ['appointments'] });
       
       setActiveVisitId(null);
       navigate('/clinician/queue');
-    } catch (e) {
-      toast.error('Failed to complete consultation');
+    } catch (e: any) {
+      const msg = e?.response?.data?.detail || e?.message || 'Failed to complete consultation';
+      toast.error(msg);
     }
   };
 
@@ -302,7 +320,24 @@ export default function ConsultationScreen() {
 
           <div className="flex-1 overflow-y-auto p-4">
              {activeTab === 'differential' && (
-               <DifferentialPanel diagnoses={aiDiagnoses} isLoading={aiLoading} symptoms={symptoms} />
+               <DifferentialPanel 
+                 diagnoses={aiDiagnoses} 
+                 isLoading={aiLoading} 
+                 symptoms={symptoms} 
+                 currentDiagnoses={diagnosis}
+                 onAddDiagnosis={(diagName: string) => {
+                   if (!diagnosis.includes(diagName)) {
+                     setDiagnosis(prev => [...prev, diagName]);
+                     toast.success(`Added "${diagName}" to provisional diagnosis`);
+                   } else {
+                     toast.error(`"${diagName}" is already in diagnosis list`);
+                   }
+                 }}
+                 onRefresh={refetchDifferential}
+                 onSelectSymptomSnippet={(snippet: string) => {
+                   setSymptoms(prev => prev ? `${prev}, ${snippet}` : snippet);
+                 }}
+               />
              )}
              {activeTab === 'prescription' && (
                 <PrescriptionWriter patient={effectiveRecord} visitId={visitId!} onSaved={() => setActiveTab('labs')} />

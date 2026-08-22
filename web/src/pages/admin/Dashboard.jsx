@@ -8,7 +8,7 @@ import {
   Users, Activity, Hospital, ShieldCheck, LogOut,
   TrendingUp, AlertTriangle, CheckCircle, Clock,
   BarChart2, Map, RefreshCcw, Plus, Trash2, Building2,
-  Search, Filter, Heart, Baby, Shield, UserCheck, Stethoscope, FlaskConical, User
+  Search, Filter, Heart, Baby, Shield, UserCheck, Stethoscope, FlaskConical, User, XCircle
 } from 'lucide-react';
 
 function StatCard({ title, value, subtitle, icon: Icon, color, trend }) {
@@ -41,6 +41,10 @@ export default function AdminDashboard() {
   const [userSearch, setUserSearch] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState('all');
 
+  // Doctor Verification & Affiliation State
+  const [rejectModalDoctor, setRejectModalDoctor] = useState(null);
+  const [rejectionReasonText, setRejectionReasonText] = useState('');
+
   // Hospital form state
   const [hospitalForm, setHospitalForm] = useState({
     name: '', type: 'govt', district: 'Chennai', state: 'Tamil Nadu'
@@ -48,6 +52,18 @@ export default function AdminDashboard() {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
 
   // Queries
+  const { data: doctorRequests = [], isLoading: docReqLoading } = useQuery({
+    queryKey: ['adminDoctorRequests'],
+    queryFn: () => api.get('/admin/doctor-requests').then(r => r.data).catch(() => []),
+    refetchInterval: 15000,
+    enabled: activeTab === 'doctor-verifications' || activeTab === 'overview',
+  });
+
+  const { data: doctorAuditLogs = [] } = useQuery({
+    queryKey: ['adminDoctorAuditLogs'],
+    queryFn: () => api.get('/admin/doctor-audit-logs').then(r => r.data).catch(() => []),
+    enabled: activeTab === 'doctor-verifications',
+  });
   const { data: stats, isLoading, refetch, isError } = useQuery({
     queryKey: ['adminStats'],
     queryFn: () => api.get('/admin/stats').then(r => r.data).catch(() => ({})),
@@ -68,7 +84,7 @@ export default function AdminDashboard() {
     enabled: activeTab === 'hospitals',
   });
 
-  // User Management Query with fallback data
+  // User Management Query
   const { data: usersList = [], isLoading: usersLoading, refetch: refetchUsers } = useQuery({
     queryKey: ['adminUsers'],
     queryFn: async () => {
@@ -76,21 +92,13 @@ export default function AdminDashboard() {
         const res = await api.get('/admin/users');
         return res.data;
       } catch (err) {
-        // Fallback user dataset if endpoint is not built in backend
-        return [
-          { id: 'u1', name: 'Dr. Ramesh Kumar', email: 'dr.ramesh@ayudisha.in', role: 'doctor', hospital: 'Govt Hospital Chennai', status: 'Active', created_at: '2026-01-15' },
-          { id: 'u2', name: 'Kavitha S (ASHA)', email: 'kavitha.asha@ayudisha.in', role: 'asha', hospital: 'Ambattur PHC', status: 'Active', created_at: '2026-02-01' },
-          { id: 'u3', name: 'Suresh V (Lab Tech)', email: 'suresh.lab@ayudisha.in', role: 'lab', hospital: 'Chennai Central Lab', status: 'Active', created_at: '2026-02-10' },
-          { id: 'u4', name: 'Anitha Devi (Patient)', email: 'anitha.patient@gmail.com', role: 'patient', hospital: 'Govt Hospital Chennai', status: 'Active', created_at: '2026-03-05' },
-          { id: 'u5', name: 'Dr. Priya Sundaram', email: 'dr.priya@ayudisha.in', role: 'doctor', hospital: 'Tambaram District Hospital', status: 'Active', created_at: '2026-03-12' },
-          { id: 'u6', name: 'Meena R (ASHA)', email: 'meena.asha@ayudisha.in', role: 'asha', hospital: 'Tambaram District Hospital', status: 'Active', created_at: '2026-04-02' },
-        ];
+        return [];
       }
     },
     enabled: activeTab === 'users',
   });
 
-  // Maternal & Child Health Query with fallback
+  // Maternal & Child Health Query
   const { data: maternalData } = useQuery({
     queryKey: ['adminMaternal'],
     queryFn: async () => {
@@ -99,16 +107,11 @@ export default function AdminDashboard() {
         return res.data;
       } catch {
         return {
-          high_risk_pregnant: 42,
-          anc_checkups_completed: 318,
-          immunization_coverage_pct: 94,
-          institutional_deliveries_pct: 98,
-          registry: [
-            { id: 'm1', name: 'Lakshmi M', age: 24, trimester: '2nd Trimester', hb: '8.4 g/dL', risk: 'Severe Anemia', asha: 'Kavitha S', hospital: 'Ambattur PHC', anc_status: '3/4 Completed' },
-            { id: 'm2', name: 'Pooja R', age: 29, trimester: '3rd Trimester', hb: '9.8 g/dL', risk: 'Gestational BP', asha: 'Meena R', hospital: 'Tambaram GH', anc_status: '4/4 Completed' },
-            { id: 'm3', name: 'Deepa V', age: 21, trimester: '1st Trimester', hb: '10.2 g/dL', risk: 'Underweight (BMI 17)', asha: 'Kavitha S', hospital: 'Ambattur PHC', anc_status: '1/4 Completed' },
-            { id: 'm4', name: 'Revathi K', age: 31, trimester: '3rd Trimester', hb: '7.9 g/dL', risk: 'Severe Anemia & High Risk', asha: 'Meena R', hospital: 'Govt Hospital Chennai', anc_status: '4/4 Completed' }
-          ]
+          high_risk_pregnant: 0,
+          anc_checkups_completed: 0,
+          immunization_coverage_pct: 0,
+          institutional_deliveries_pct: 0,
+          registry: []
         };
       }
     },
@@ -149,6 +152,33 @@ export default function AdminDashboard() {
     addHospitalMutation.mutate(hospitalForm);
   };
 
+  const approveDoctorMutation = useMutation({
+    mutationFn: (doctorId) => api.post(`/admin/doctor-requests/${doctorId}/approve`).then(r => r.data),
+    onSuccess: (res) => {
+      toast.success(res?.message || 'Doctor approved successfully');
+      queryClient.invalidateQueries({ queryKey: ['adminDoctorRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['adminUsers'] });
+      queryClient.invalidateQueries({ queryKey: ['adminStats'] });
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || 'Failed to approve doctor');
+    }
+  });
+
+  const rejectDoctorMutation = useMutation({
+    mutationFn: ({ doctorId, rejectionReason }) => api.post(`/admin/doctor-requests/${doctorId}/reject`, { rejection_reason: rejectionReason }).then(r => r.data),
+    onSuccess: (res) => {
+      toast.success(res?.message || 'Doctor request rejected');
+      queryClient.invalidateQueries({ queryKey: ['adminDoctorRequests'] });
+      queryClient.invalidateQueries({ queryKey: ['adminUsers'] });
+      setRejectModalDoctor(null);
+      setRejectionReasonText('');
+    },
+    onError: (err) => {
+      toast.error(err.response?.data?.detail || 'Failed to reject doctor');
+    }
+  });
+
   const handleLogout = () => {
     logout();
     navigate('/login');
@@ -163,8 +193,43 @@ export default function AdminDashboard() {
     return matchesSearch && matchesRole;
   });
 
+  const pendingDoctorsCount = doctorRequests.filter(d => d.hospital_status === 'PENDING' || d.verification_status === 'PENDING').length;
+
+  // OPD Walk-in State
+  const [walkinForm, setWalkinForm] = useState({
+    patient_name: '', mobile: '', abha_number: '', specialty: 'General Medicine', chief_complaint: 'Routine OPD Walk-In'
+  });
+  const [walkinLoading, setWalkinLoading] = useState(false);
+  const [possibleMatch, setPossibleMatch] = useState(null);
+
+  const handleWalkinSubmit = async (e, confirmLink = false) => {
+    if (e) e.preventDefault();
+    setWalkinLoading(true);
+    try {
+      const res = await api.post('/admin/walkin-register', {
+        ...walkinForm,
+        confirm_link: confirmLink
+      });
+
+      if (res.data.requires_confirmation) {
+        setPossibleMatch(res.data);
+      } else {
+        toast.success(res.data.message || 'Walk-in registered successfully!');
+        setWalkinForm({ patient_name: '', mobile: '', abha_number: '', specialty: 'General Medicine', chief_complaint: 'Routine OPD Walk-In' });
+        setPossibleMatch(null);
+        queryClient.invalidateQueries({ queryKey: ['adminStats'] });
+      }
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to register walk-in patient.');
+    } finally {
+      setWalkinLoading(false);
+    }
+  };
+
   const tabs = [
     { id: 'overview', label: 'Overview' },
+    { id: 'doctor-verifications', label: `Doctor Verification & Affiliation ${pendingDoctorsCount > 0 ? `(${pendingDoctorsCount})` : ''}` },
+    { id: 'opd-walkin', label: 'OPD Walk-In Registration' },
     { id: 'users', label: 'User Management' },
     { id: 'maternal', label: 'Maternal & Child Health' },
     { id: 'hospitals', label: 'Hospitals' },
@@ -251,28 +316,28 @@ export default function AdminDashboard() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6 mb-8">
                 <StatCard
                   title="Total Patients"
-                  value={isLoading ? '...' : (stats?.total_patients ?? 1240).toLocaleString()}
+                  value={isLoading ? '...' : (stats?.total_patients ?? 0).toLocaleString()}
                   subtitle="Registered on platform"
                   icon={Users}
                   color="bg-blue-100 text-blue-600"
                 />
                 <StatCard
                   title="Doctors"
-                  value={isLoading ? '...' : (stats?.total_doctors ?? 48)}
+                  value={isLoading ? '...' : (stats?.total_doctors ?? 0)}
                   subtitle="Active clinicians"
                   icon={Activity}
                   color="bg-green-100 text-green-600"
                 />
                 <StatCard
                   title="ASHA Workers"
-                  value={isLoading ? '...' : (stats?.total_asha_workers ?? 112)}
+                  value={isLoading ? '...' : (stats?.total_asha_workers ?? 0)}
                   subtitle="Community health workers"
                   icon={ShieldCheck}
                   color="bg-purple-100 text-purple-600"
                 />
                 <StatCard
                   title="Hospitals"
-                  value={isLoading ? '...' : (stats?.total_hospitals ?? 18)}
+                  value={isLoading ? '...' : (stats?.total_hospitals ?? 0)}
                   subtitle="Registered facilities"
                   icon={Hospital}
                   color="bg-orange-100 text-orange-600"
@@ -284,36 +349,34 @@ export default function AdminDashboard() {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6 mb-8">
                 <StatCard
                   title="Visits Today"
-                  value={isLoading ? '...' : (stats?.visits_today ?? 86)}
+                  value={isLoading ? '...' : (stats?.visits_today ?? 0)}
                   subtitle="Consultations completed"
                   icon={CheckCircle}
                   color="bg-teal-100 text-teal-600"
                 />
                 <StatCard
                   title="Pending Referrals"
-                  value={isLoading ? '...' : (stats?.referrals_pending ?? 14)}
+                  value={isLoading ? '...' : (stats?.referrals_pending ?? 0)}
                   subtitle="Awaiting acceptance"
                   icon={Clock}
                   color="bg-amber-100 text-amber-600"
                 />
                 <StatCard
                   title="High-Risk Households"
-                  value={isLoading ? '...' : (stats?.high_risk_households ?? 42)}
+                  value={isLoading ? '...' : (stats?.high_risk_households ?? 0)}
                   subtitle="Flagged by ASHA workers"
                   icon={AlertTriangle}
                   color="bg-red-100 text-red-600"
                 />
                 <StatCard
                   title="Active Consents"
-                  value={isLoading ? '...' : (stats?.consents_active ?? 94)}
+                  value={isLoading ? '...' : (stats?.consents_active ?? 0)}
                   subtitle="Patient data access grants"
                   icon={ShieldCheck}
                   color="bg-indigo-100 text-indigo-600"
                 />
               </div>
-            )}
-
-            {/* Recent Activity */}
+            )}            {/* Recent Activity */}
             <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
               <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
                 <h3 className="font-bold text-gray-800">Recent Activity</h3>
@@ -326,14 +389,16 @@ export default function AdminDashboard() {
                   </div>
                 ) : (
                   recentActivity.map((item, i) => (
-                    <div key={i} className="px-6 py-4 flex items-start gap-4 hover:bg-gray-50 transition-colors">
-                      <div className={`w-2 h-2 rounded-full mt-2 shrink-0 ${
-                        item.severity === 'urgent' ? 'bg-red-500' :
-                        item.severity === 'warning' ? 'bg-amber-500' : 'bg-green-500'
-                      }`} />
-                      <div className="flex-1">
-                        <p className="text-sm text-gray-700">{item.message}</p>
-                        <p className="text-xs text-gray-400 mt-0.5">{item.time}</p>
+                    <div key={i} className="px-6 py-4 flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className={`w-2 h-2 rounded-full ${
+                          item.severity === 'urgent' ? 'bg-red-500' :
+                          item.severity === 'warning' ? 'bg-amber-500' : 'bg-green-500'
+                        }`} />
+                        <div>
+                          <p className="text-sm text-gray-700">{item.message}</p>
+                          <p className="text-xs text-gray-400 mt-0.5">{item.time}</p>
+                        </div>
                       </div>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${
                         item.severity === 'urgent' ? 'bg-red-100 text-red-600' :
@@ -347,6 +412,178 @@ export default function AdminDashboard() {
               </div>
             </div>
           </>
+        )}
+
+        {/* Doctor Verification & Affiliation Tab */}
+        {activeTab === 'doctor-verifications' && (
+          <div className="space-y-8">
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+                <div>
+                  <h3 className="text-lg font-bold text-gray-800">Doctor Verification & Hospital Affiliation Requests</h3>
+                  <p className="text-xs text-gray-500 mt-1">Review medical credentials and grant clinical hospital access</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-gray-500">Pending:</span>
+                  <span className="bg-amber-100 text-amber-800 font-extrabold px-3 py-1 rounded-full text-xs">
+                    {doctorRequests.filter(d => d.hospital_status === 'PENDING' || d.verification_status === 'PENDING').length}
+                  </span>
+                </div>
+              </div>
+
+              {docReqLoading ? (
+                <div className="py-12 text-center text-gray-400">Loading doctor requests...</div>
+              ) : doctorRequests.length === 0 ? (
+                <div className="py-12 text-center text-gray-400 text-sm">No doctor verification or affiliation requests found.</div>
+              ) : (
+                <div className="overflow-x-auto custom-scrollbar">
+                  <table className="w-full text-left text-sm border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200 text-xs font-bold text-gray-400 uppercase tracking-wider bg-gray-50/50">
+                        <th className="py-3 px-4">Doctor Info</th>
+                        <th className="py-3 px-4">Medical Registration</th>
+                        <th className="py-3 px-4">Requested Hospital</th>
+                        <th className="py-3 px-4">Verification</th>
+                        <th className="py-3 px-4">Affiliation</th>
+                        <th className="py-3 px-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {doctorRequests.map((doc) => (
+                        <tr key={doc.id} className="hover:bg-gray-50/50 transition-colors">
+                          <td className="py-4 px-4">
+                            <div className="font-bold text-gray-800">{doc.name}</div>
+                            <div className="text-xs text-gray-500">{doc.email} | {doc.mobile}</div>
+                            <div className="text-[11px] text-[#1B6CA8] font-semibold mt-0.5">{doc.qualification} — {doc.speciality}</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="font-mono font-bold text-xs text-gray-800">{doc.medical_registration_number}</div>
+                            <div className="text-xs text-gray-500">{doc.medical_council}</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <div className="font-semibold text-gray-800">{doc.requested_hospital_id}</div>
+                            <div className="text-[10px] text-gray-400">Req: {doc.created_at}</div>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase ${
+                              doc.verification_status === 'VERIFIED' ? 'bg-green-100 text-green-700' :
+                              doc.verification_status === 'REJECTED' || doc.verification_status === 'FAILED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                            }`}>
+                              {doc.verification_status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4">
+                            <span className={`text-[10px] font-extrabold px-2.5 py-1 rounded-full uppercase ${
+                              doc.hospital_status === 'APPROVED' ? 'bg-green-100 text-green-700' :
+                              doc.hospital_status === 'REJECTED' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700'
+                            }`}>
+                              {doc.hospital_status}
+                            </span>
+                          </td>
+                          <td className="py-4 px-4 text-right">
+                            {doc.hospital_status === 'APPROVED' ? (
+                              <span className="text-xs font-bold text-green-600 inline-flex items-center gap-1">
+                                <CheckCircle size={14} /> Active
+                              </span>
+                            ) : doc.hospital_status === 'REJECTED' || doc.verification_status === 'REJECTED' ? (
+                              <span className="text-xs font-bold text-red-600 inline-flex items-center gap-1">
+                                <XCircle size={14} /> Rejected
+                              </span>
+                            ) : (
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => approveDoctorMutation.mutate(doc.id)}
+                                  disabled={approveDoctorMutation.isPending}
+                                  className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white font-bold text-xs rounded-lg transition-colors shadow-sm disabled:opacity-50"
+                                >
+                                  Approve
+                                </button>
+                                <button
+                                  onClick={() => setRejectModalDoctor(doc)}
+                                  className="px-3 py-1.5 bg-red-100 hover:bg-red-200 text-red-700 font-bold text-xs rounded-lg transition-colors"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Audit Logs Table */}
+            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+              <h3 className="text-base font-bold text-gray-800 mb-4">Doctor Approval Audit History</h3>
+              {doctorAuditLogs.length === 0 ? (
+                <p className="text-xs text-gray-400 py-4">No audit logs recorded yet.</p>
+              ) : (
+                <div className="overflow-x-auto custom-scrollbar">
+                  <table className="w-full text-left text-xs border-collapse">
+                    <thead>
+                      <tr className="border-b border-gray-200 font-bold text-gray-400 uppercase bg-gray-50/50">
+                        <th className="py-2.5 px-3">Timestamp</th>
+                        <th className="py-2.5 px-3">Action</th>
+                        <th className="py-2.5 px-3">Doctor</th>
+                        <th className="py-2.5 px-3">Admin</th>
+                        <th className="py-2.5 px-3">Hospital</th>
+                        <th className="py-2.5 px-3">Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {doctorAuditLogs.map((log) => (
+                        <tr key={log.id} className="hover:bg-gray-50/50">
+                          <td className="py-2.5 px-3 text-gray-500 font-mono">{log.timestamp}</td>
+                          <td className="py-2.5 px-3 font-bold text-gray-800">{log.action}</td>
+                          <td className="py-2.5 px-3 font-semibold text-[#1B6CA8]">{log.doctor_name}</td>
+                          <td className="py-2.5 px-3 text-gray-600">{log.admin_name}</td>
+                          <td className="py-2.5 px-3 text-gray-600">{log.hospital_id}</td>
+                          <td className="py-2.5 px-3 text-gray-500 italic">{log.rejection_reason || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Rejection Modal */}
+        {rejectModalDoctor && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl border border-gray-200 animate-fadeIn">
+              <h3 className="text-lg font-bold text-gray-800 mb-2">Reject Doctor Affiliation</h3>
+              <p className="text-xs text-gray-500 mb-4">
+                Provide a reason for rejecting Dr. <span className="font-bold text-gray-700">{rejectModalDoctor.name}</span>. This reason will be displayed to the doctor.
+              </p>
+              <textarea
+                value={rejectionReasonText}
+                onChange={(e) => setRejectionReasonText(e.target.value)}
+                placeholder="e.g. Medical registration details do not match council records or hospital quota full."
+                className="w-full p-3 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-red-500 h-28 mb-4 text-gray-800"
+                required
+              />
+              <div className="flex justify-end gap-3">
+                <button
+                  onClick={() => setRejectModalDoctor(null)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-bold text-xs rounded-xl"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => rejectDoctorMutation.mutate({ doctorId: rejectModalDoctor.id, rejectionReason: rejectionReasonText })}
+                  disabled={rejectDoctorMutation.isPending || !rejectionReasonText.trim()}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-bold text-xs rounded-xl disabled:opacity-50"
+                >
+                  Confirm Rejection
+                </button>
+              </div>
+            </div>
+          </div>
         )}
 
         {/* User Management Tab */}
@@ -383,7 +620,7 @@ export default function AdminDashboard() {
                     onClick={() => refetchUsers()}
                     className="px-4 py-2.5 bg-[#1B6CA8] hover:bg-[#155A8A] text-white rounded-xl text-xs sm:text-sm font-semibold transition-colors flex items-center gap-2 shrink-0"
                   >
-                    <RefreshCw size={15} />
+                    <RefreshCcw size={15} />
                     Refresh
                   </button>
                 </div>
@@ -441,6 +678,139 @@ export default function AdminDashboard() {
                     )}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* OPD Walk-In Registration Tab */}
+        {activeTab === 'opd-walkin' && (
+          <div className="space-y-6">
+            <div className="bg-white rounded-2xl border border-gray-100 p-6 shadow-sm max-w-2xl mx-auto">
+              <div className="flex items-center gap-3 mb-4">
+                <div className="bg-[#1B6CA8]/10 p-2.5 rounded-xl">
+                  <UserCheck size={22} className="text-[#1B6CA8]" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-gray-800 text-base">OPD Walk-In Patient Registration</h3>
+                  <p className="text-xs text-gray-400">Register arriving walk-in patients directly into the active doctor queue.</p>
+                </div>
+              </div>
+
+              <form onSubmit={(e) => handleWalkinSubmit(e, false)} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-700 block mb-1">Patient Full Name</label>
+                    <input
+                      type="text"
+                      value={walkinForm.patient_name}
+                      onChange={(e) => setWalkinForm({ ...walkinForm, patient_name: e.target.value })}
+                      placeholder="e.g. Ramesh Kumar"
+                      className="w-full text-xs font-medium p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1B6CA8]"
+                      required
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-700 block mb-1">Mobile Number</label>
+                    <input
+                      type="text"
+                      value={walkinForm.mobile}
+                      onChange={(e) => setWalkinForm({ ...walkinForm, mobile: e.target.value })}
+                      placeholder="e.g. 9876543210"
+                      className="w-full text-xs font-medium p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1B6CA8]"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-xs font-semibold text-gray-700 block mb-1">ABHA ID (Optional)</label>
+                    <input
+                      type="text"
+                      value={walkinForm.abha_number}
+                      onChange={(e) => setWalkinForm({ ...walkinForm, abha_number: e.target.value })}
+                      placeholder="ABHA-20260815-XXXX"
+                      className="w-full text-xs font-medium p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1B6CA8]"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-gray-700 block mb-1">Target Specialty</label>
+                    <select
+                      value={walkinForm.specialty}
+                      onChange={(e) => setWalkinForm({ ...walkinForm, specialty: e.target.value })}
+                      className="w-full text-xs font-medium p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1B6CA8]"
+                    >
+                      <option value="General Medicine">General Medicine</option>
+                      <option value="Cardiology">Cardiology</option>
+                      <option value="Orthopedics">Orthopedics</option>
+                      <option value="Gynecology">Gynecology</option>
+                      <option value="Pediatrics">Pediatrics</option>
+                      <option value="Dermatology">Dermatology</option>
+                      <option value="ENT">ENT</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-semibold text-gray-700 block mb-1">Chief Complaint / Symptoms</label>
+                  <input
+                    type="text"
+                    value={walkinForm.chief_complaint}
+                    onChange={(e) => setWalkinForm({ ...walkinForm, chief_complaint: e.target.value })}
+                    placeholder="e.g. Acute chest pain, shortness of breath"
+                    className="w-full text-xs font-medium p-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-[#1B6CA8]"
+                    required
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={walkinLoading}
+                  className="w-full bg-[#1B6CA8] hover:bg-[#1557A0] text-white text-xs font-bold py-3.5 rounded-xl transition-all shadow-sm flex items-center justify-center gap-2"
+                >
+                  {walkinLoading ? 'Processing Walk-In...' : 'Register Walk-In & Check In to OPD Queue'}
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Duplicate Warning Confirmation Modal */}
+        {possibleMatch && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl animate-in fade-in zoom-in duration-200">
+              <div className="flex items-center gap-3 text-amber-600 mb-3">
+                <AlertTriangle size={24} />
+                <h3 className="text-base font-bold text-gray-800">Possible Patient Match Found</h3>
+              </div>
+              <p className="text-xs text-gray-600 mb-4">{possibleMatch.message}</p>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 mb-4 text-xs">
+                <p className="font-bold text-amber-900">{possibleMatch.patient?.name}</p>
+                <p className="text-amber-700">Mobile: {possibleMatch.patient?.mobile}</p>
+                {possibleMatch.patient?.abha_number && (
+                  <p className="text-amber-700">ABHA: {possibleMatch.patient?.abha_number}</p>
+                )}
+              </div>
+
+              <p className="text-[11px] text-gray-500 mb-4">
+                To prevent creating duplicate health records or erroneously merging different patients, please confirm whether to link to this existing profile or create a new patient record.
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleWalkinSubmit(null, true)}
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold py-2.5 rounded-xl transition-all"
+                >
+                  Confirm & Link Record
+                </button>
+                <button
+                  onClick={() => setPossibleMatch(null)}
+                  className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold py-2.5 rounded-xl transition-all"
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>

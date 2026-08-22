@@ -8,10 +8,15 @@ class Settings(BaseSettings):
     jwt_secret: str
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 15
-    allowed_origins: str = "http://localhost:3000,http://localhost:5173,https://rishithaaa01.github.io"
+    allowed_origins: str = "http://localhost:3000,http://localhost:5173,http://172.23.22.19:8000,http://172.23.22.19:5173,http://172.23.22.19:8081,http://10.125.222.66:8000,http://10.125.222.66:5173,http://10.125.222.66:8081,http://10.23.167.66:8000,http://10.23.167.66:5173,http://10.23.167.66:8081,https://rishithaaa01.github.io"
     firebase_credentials_path: str
     firebase_credentials_json: Optional[str] = None
-    groq_api_key: str
+
+    # Mobile local AI settings
+    whisper_model: str = "openai/whisper-tiny"
+    ollama_base_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "tinyllama:latest"
+    ollama_timeout: int = 3
 
     # Cloudinary (free tier — pdf storage)
     cloudinary_cloud_name: Optional[str] = None

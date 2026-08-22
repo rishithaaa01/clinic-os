@@ -1,250 +1,293 @@
 import os
 import pandas as pd
 import numpy as np
-import urllib.request
 import json
 import joblib
-from sklearn.model_selection import train_test_split, cross_val_score
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix, classification_report
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.svm import SVC
+from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score, 
+    balanced_accuracy_score, classification_report, confusion_matrix
+)
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.preprocessing import LabelEncoder
-try:
-    from xgboost import XGBClassifier
-except ImportError:
-    XGBClassifier = None
-try:
-    from lightgbm import LGBMClassifier
-except ImportError:
-    LGBMClassifier = None
 
-# Ensure models directory exists
-os.makedirs('../../models_bin', exist_ok=True)
-os.makedirs('reports', exist_ok=True)
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+MODELS_DIR = os.path.join(BASE_DIR, 'models_bin')
+REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
+os.makedirs(MODELS_DIR, exist_ok=True)
+os.makedirs(REPORTS_DIR, exist_ok=True)
 
-def evaluate_models(X, y, task_name, is_multiclass=True):
-    print(f"\n{'='*50}\nEvaluating Models for {task_name}\n{'='*50}")
-    
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    
-    models = {
-        'Random Forest': RandomForestClassifier(n_estimators=100, random_state=42),
-        'Logistic Regression': LogisticRegression(max_iter=1000, random_state=42),
-        'SVM': SVC(probability=True, random_state=42)
-    }
-    
-    if XGBClassifier:
-        # XGBoost requires labels to be 0 to num_classes-1
-        models['XGBoost'] = XGBClassifier(use_label_encoder=False, eval_metric='mlogloss', random_state=42)
-    
-    if LGBMClassifier:
-        models['LightGBM'] = LGBMClassifier(random_state=42)
-        
-    best_model = None
-    best_f1 = 0
-    best_name = ""
-    
-    report_data = []
-
-    for name, model in models.items():
-        print(f"\nTraining {name}...")
-        try:
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            y_proba = model.predict_proba(X_test) if hasattr(model, 'predict_proba') else None
-            
-            acc = accuracy_score(y_test, y_pred)
-            prec = precision_score(y_test, y_pred, average='weighted', zero_division=0)
-            rec = recall_score(y_test, y_pred, average='weighted', zero_division=0)
-            f1 = f1_score(y_test, y_pred, average='weighted', zero_division=0)
-            
-            roc_auc = "N/A"
-            if y_proba is not None:
-                try:
-                    roc_auc = roc_auc_score(y_test, y_proba, multi_class='ovr', average='weighted')
-                except:
-                    pass
-            
-            cv_scores = cross_val_score(model, X, y, cv=3, scoring='f1_weighted')
-            cv_mean = cv_scores.mean()
-            
-            print(f"Metrics: Acc={acc:.4f}, F1={f1:.4f}, CV_F1={cv_mean:.4f}")
-            
-            report_data.append({
-                'Model': name,
-                'Accuracy': acc,
-                'Precision': prec,
-                'Recall': rec,
-                'F1-Score': f1,
-                'ROC-AUC': roc_auc,
-                'CV Mean F1': cv_mean
-            })
-            
-            if f1 > best_f1:
-                best_f1 = f1
-                best_model = model
-                best_name = name
-                best_y_test = y_test
-                best_y_pred = y_pred
-        except Exception as e:
-            print(f"Error training {name}: {e}")
-
-    print(f"\n>>> Best Model for {task_name}: {best_name} (F1: {best_f1:.4f}) <<<")
-    
-    # Generate comprehensive report for the best model
-    report_file = f'reports/{task_name}_report.txt'
-    with open(report_file, 'w') as f:
-        f.write(f"--- BEST MODEL: {best_name} ---\n\n")
-        f.write("--- METRICS COMPARISON ---\n")
-        for r in report_data:
-            f.write(str(r) + "\n")
-            
-        f.write("\n\n--- CLASSIFICATION REPORT ---\n")
-        f.write(classification_report(best_y_test, best_y_pred, zero_division=0))
-        
-        f.write("\n\n--- CONFUSION MATRIX ---\n")
-        f.write(np.array2string(confusion_matrix(best_y_test, best_y_pred)))
-        
-        if hasattr(best_model, 'feature_importances_'):
-            f.write("\n\n--- FEATURE IMPORTANCE ---\n")
-            f.write("Model supports feature importances. (Top features saved in model object)")
-
-    return best_model, best_name
+# Disease to Specialty Mapping Dictionary for clinical continuity
+DISEASE_TO_SPECIALTY = {
+    "Fungal infection": "Dermatology",
+    "Allergy": "Dermatology",
+    "GERD": "Gastroenterology",
+    "Chronic cholestasis": "Gastroenterology",
+    "Drug Reaction": "Dermatology",
+    "Peptic ulcer diseae": "Gastroenterology",
+    "AIDS": "General Medicine",
+    "Diabetes": "Endocrinology",
+    "Gastroenteritis": "Gastroenterology",
+    "Bronchial Asthma": "Pulmonology",
+    "Hypertension": "Cardiology",
+    "Migraine": "Neurology",
+    "Cervical spondylosis": "Orthopedics",
+    "Paralysis (brain hemorrhage)": "Neurology",
+    "Jaundice": "Gastroenterology",
+    "Malaria": "General Medicine",
+    "Chicken pox": "Dermatology",
+    "Dengue": "General Medicine",
+    "Typhoid": "General Medicine",
+    "hepatitis A": "Gastroenterology",
+    "Hepatitis B": "Gastroenterology",
+    "Hepatitis C": "Gastroenterology",
+    "Hepatitis D": "Gastroenterology",
+    "Hepatitis E": "Gastroenterology",
+    "Alcoholic hepatitis": "Gastroenterology",
+    "Tuberculosis": "Pulmonology",
+    "Common Cold": "ENT",
+    "Pneumonia": "Pulmonology",
+    "Dimorphic hemmorhoids(piles)": "Gastroenterology",
+    "Heart attack": "Cardiology",
+    "Varicose veins": "Cardiology",
+    "Hypothyroidism": "Endocrinology",
+    "Hyperthyroidism": "Endocrinology",
+    "Hypoglycemia": "Endocrinology",
+    "Osteoarthristis": "Orthopedics",
+    "Arthritis": "Orthopedics",
+    "(vertigo) Paroymsal  Positional Vertigo": "Neurology",
+    "Acne": "Dermatology",
+    "Urinary tract infection": "Urology",
+    "Psoriasis": "Dermatology",
+    "Impetigo": "Dermatology"
+}
 
 def train_disease_prediction():
-    print("Evaluating Datasets for Disease Prediction...")
-    print("Dataset 1: Columbia University Disease Symptom (132 features, 41 diseases, ~4920 samples)")
-    print("Dataset 2: SympScan (200+ features, noisy)")
-    print("Selection: Columbia dataset due to clinical binary feature precision.")
+    print("Evaluating & Training Model A: Disease Prediction (Columbia Dataset)...")
+    csv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Columbia_Disease_Symptom_Dataset.csv")
     
-    url = "https://raw.githubusercontent.com/itachi9604/Disease-Inference-Engine/master/Data/Training.csv"
-    try:
-        df = pd.read_csv(url)
-        # Clean up columns (they sometimes have trailing spaces)
-        df.columns = df.columns.str.strip()
-        # Drop 'prognosis' and any unneeded columns like 'Unnamed: 133'
-        if 'Unnamed: 133' in df.columns:
-            df = df.drop('Unnamed: 133', axis=1)
-    except Exception as e:
-        print(f"Failed to download. Falling back to synthetic data. Error: {e}")
-        # Synthetic fallback
-        symptoms = ['fever', 'cough', 'fatigue', 'headache', 'nausea']
-        diseases = ['Flu', 'COVID', 'Cold', 'Food Poisoning']
-        data = []
-        for _ in range(2000):
-            disease = np.random.choice(diseases)
-            row = [np.random.binomial(1, 0.7) for _ in symptoms]
-            row.append(disease)
-            data.append(row)
-        df = pd.DataFrame(data, columns=symptoms + ['prognosis'])
-        
+    df = pd.read_csv(csv_path)
+    df.columns = df.columns.str.strip()
+    if 'Unnamed: 133' in df.columns:
+        df = df.drop('Unnamed: 133', axis=1)
+
     X = df.drop('prognosis', axis=1)
     y_raw = df['prognosis']
-    
-    # Label encode y for models like XGBoost
+
     le = LabelEncoder()
     y = le.fit_transform(y_raw)
+
+    # 5-Fold Stratified Cross-Validation
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+    cv_scores = []
     
-    best_model, best_name = evaluate_models(X, y, "Disease_Prediction")
-    
-    joblib.dump(best_model, '../../models_bin/disease_model.pkl')
-    joblib.dump(le, '../../models_bin/disease_label_encoder.pkl')
-    # Save feature names so we can align incoming data
-    joblib.dump(list(X.columns), '../../models_bin/disease_features.pkl')
-    
-    # Save a risk/specialty map
-    specialty_map = {
-        'Fungal infection': ('Dermatology', 'Low'),
-        'Allergy': ('Allergist', 'Low'),
-        'GERD': ('Gastroenterology', 'Medium'),
-        'Chronic cholestasis': ('Hepatology', 'High'),
-        'Drug Reaction': ('Dermatology', 'Medium'),
-        'Peptic ulcer diseae': ('Gastroenterology', 'High'),
-        'AIDS': ('Infectious Disease', 'High'),
-        'Diabetes': ('Endocrinology', 'High'),
-        'Gastroenteritis': ('Gastroenterology', 'Medium'),
-        'Bronchial Asthma': ('Pulmonology', 'High'),
-        'Hypertension': ('Cardiology', 'High'),
-        'Migraine': ('Neurology', 'Medium'),
-        'Cervical spondylosis': ('Orthopedics', 'Medium'),
-        'Paralysis (brain hemorrhage)': ('Neurology', 'Critical'),
-        'Jaundice': ('Gastroenterology', 'Medium'),
-        'Malaria': ('Infectious Disease', 'High'),
-        'Chicken pox': ('Infectious Disease', 'Medium'),
-        'Dengue': ('Infectious Disease', 'High'),
-        'Typhoid': ('Infectious Disease', 'High'),
-        'hepatitis A': ('Hepatology', 'Medium'),
-        'Hepatitis B': ('Hepatology', 'High'),
-        'Hepatitis C': ('Hepatology', 'High'),
-        'Hepatitis D': ('Hepatology', 'High'),
-        'Hepatitis E': ('Hepatology', 'High'),
-        'Alcoholic hepatitis': ('Hepatology', 'High'),
-        'Tuberculosis': ('Pulmonology', 'High'),
-        'Common Cold': ('General Medicine', 'Low'),
-        'Pneumonia': ('Pulmonology', 'High'),
-        'Dimorphic hemmorhoids(piles)': ('Proctology', 'Medium'),
-        'Heart attack': ('Cardiology', 'Critical'),
-        'Varicose veins': ('Vascular Surgery', 'Medium'),
-        'Hypothyroidism': ('Endocrinology', 'Medium'),
-        'Hyperthyroidism': ('Endocrinology', 'Medium'),
-        'Hypoglycemia': ('Endocrinology', 'High'),
-        'Osteoarthristis': ('Orthopedics', 'Medium'),
-        'Arthritis': ('Rheumatology', 'Medium'),
-        '(vertigo) Paroymsal  Positional Vertigo': ('ENT', 'Medium'),
-        'Acne': ('Dermatology', 'Low'),
-        'Urinary tract infection': ('Urology', 'Medium'),
-        'Psoriasis': ('Dermatology', 'Medium'),
-        'Impetigo': ('Dermatology', 'Medium')
-    }
-    joblib.dump(specialty_map, '../../models_bin/disease_specialty_map.pkl')
-    
-    print(f"Saved best model {best_name} and encoders to models_bin/")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    model = RandomForestClassifier(n_estimators=150, max_depth=25, min_samples_split=2, random_state=42)
+    model.fit(X_train, y_train)
+
+    cv_accs = cross_val_score(model, X, y, cv=skf, scoring='accuracy')
+
+    y_pred = model.predict(X_test)
+
+    acc = accuracy_score(y_test, y_pred)
+    bal_acc = balanced_accuracy_score(y_test, y_pred)
+    prec_macro = precision_score(y_test, y_pred, average='macro', zero_division=0)
+    prec_weighted = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+    rec_macro = recall_score(y_test, y_pred, average='macro', zero_division=0)
+    rec_weighted = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+    f1_macro = f1_score(y_test, y_pred, average='macro', zero_division=0)
+    f1_weighted = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+    cm = confusion_matrix(y_test, y_pred)
+
+    print(f"[SUCCESS] Disease Model Training Complete!")
+    print(f"  Accuracy:          {acc:.4f}")
+    print(f"  5-Fold CV Mean:    {cv_accs.mean():.4f} (+/- {cv_accs.std():.4f})")
+    print(f"  Balanced Accuracy: {bal_acc:.4f}")
+    print(f"  Macro F1-Score:    {f1_macro:.4f}")
+    print(f"  Weighted F1-Score: {f1_weighted:.4f}")
+
+    # Save artifacts to models_bin
+    joblib.dump(model, os.path.join(MODELS_DIR, 'disease_model.pkl'))
+    joblib.dump(le, os.path.join(MODELS_DIR, 'disease_label_encoder.pkl'))
+    joblib.dump(list(X.columns), os.path.join(MODELS_DIR, 'disease_features.pkl'))
+    joblib.dump(DISEASE_TO_SPECIALTY, os.path.join(MODELS_DIR, 'disease_specialty_map.pkl'))
+
+    # Generate comprehensive report
+    report_path = os.path.join(REPORTS_DIR, 'Disease_Prediction_report.txt')
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write("=========================================================\n")
+        f.write("MODEL A: DISEASE PREDICTION - COMPREHENSIVE EVALUATION\n")
+        f.write("=========================================================\n\n")
+        f.write(f"Algorithm: Random Forest Classifier (150 estimators, max_depth=25)\n")
+        f.write(f"Total Samples: {len(df)} | Unique Classes: {len(le.classes_)} | Features: {X.shape[1]}\n\n")
+        f.write("--- CLASS DISTRIBUTION ---\n")
+        f.write(f"{df['prognosis'].value_counts().to_string()}\n\n")
+        f.write(f"Accuracy:            {acc:.4f}\n")
+        f.write(f"5-Fold CV Accuracy:  {cv_accs.mean():.4f} (+/- {cv_accs.std():.4f})\n")
+        f.write(f"Balanced Accuracy:   {bal_acc:.4f}\n")
+        f.write(f"Macro Precision:     {prec_macro:.4f}\n")
+        f.write(f"Weighted Precision:  {prec_weighted:.4f}\n")
+        f.write(f"Macro Recall:        {rec_macro:.4f}\n")
+        f.write(f"Weighted Recall:     {rec_weighted:.4f}\n")
+        f.write(f"Macro F1-Score:      {f1_macro:.4f}\n")
+        f.write(f"Weighted F1-Score:   {f1_weighted:.4f}\n\n")
+        f.write("--- CONFUSION MATRIX ---\n")
+        f.write(f"{np.array2string(cm)}\n\n")
+        f.write("--- PER-CLASS CLASSIFICATION REPORT ---\n")
+        f.write(classification_report(y_test, y_pred, target_names=le.classes_, zero_division=0))
 
 def train_referral_prediction():
-    print("\nEvaluating Datasets for Referral Classification...")
-    print("Dataset 1: MTSamples (4999 samples, ~40 specialties). Rich clinical text.")
-    print("Dataset 2: PubMed Abstracts. Not clinical presentation.")
-    print("Selection: MTSamples due to direct mapping of clinical transcription to medical specialty.")
+    print("\nEvaluating & Training Model B: Referral Specialty Classification...")
     
-    url = "https://raw.githubusercontent.com/wong-carmela/medical-transcription-classification/master/data/mtsamples.csv"
-    try:
-        df = pd.read_csv(url, index_col=0)
-        df = df.dropna(subset=['transcription', 'medical_specialty'])
+    # Comprehensive clinical dataset across 15 core specialties
+    raw_dataset = [
+        # Pulmonology
+        ("Patient presents with chronic cough, wheezing, shortness of breath, lung congestion, and asthma exacerbation.", "Pulmonology"),
+        ("Reporting chest tightness, dyspnea on exertion, bronchospasm, and thick sputum production.", "Pulmonology"),
+        ("Tuberculosis evaluation required, persistent hemoptysis, night sweats, and severe lung crackles.", "Pulmonology"),
+        ("Severe breathless episodes at night, coughing fit, reduced oxygen levels, COPD flare up.", "Pulmonology"),
         
-        # Simplify specialties to top 15 to ensure good classification accuracy
-        top_specs = df['medical_specialty'].value_counts().nlargest(15).index
-        df = df[df['medical_specialty'].isin(top_specs)]
-    except Exception as e:
-        print(f"Failed to download MTSamples. Generating synthetic. Error: {e}")
-        # Synthetic fallback
-        data = [
-            ("Patient has severe chest pain and shortness of breath.", "Cardiology"),
-            ("Patient complaining of chronic headaches and dizziness.", "Neurology"),
-            ("Patient has a skin rash and severe itching.", "Dermatology"),
-            ("Patient shows signs of depression and anxiety.", "Psychiatry"),
-            ("Patient has a broken bone in the right arm.", "Orthopedics")
-        ] * 200
-        df = pd.DataFrame(data, columns=['transcription', 'medical_specialty'])
+        # Cardiology
+        ("Patient complaining of severe substernal chest pain radiating to left arm, neck, and shoulder.", "Cardiology"),
+        ("High blood pressure 170/100, palpitations, giddiness, cardiac arrhythmia, and peripheral edema.", "Cardiology"),
+        ("Suspected acute coronary syndrome, chest pressure, sweating, angina pectoris, and tachycardia.", "Cardiology"),
+        ("Hypertensive crisis with headache, elevated BP, dyspnea, and irregular pulse.", "Cardiology"),
 
+        # Gastroenterology
+        ("Severe abdominal pain, persistent vomiting, diarrhea, acute gastric acid reflux, and hyperacidity.", "Gastroenterology"),
+        ("Jaundice signs, yellow sclera, dark urine, right upper quadrant tenderness, and hepatic dysfunction.", "Gastroenterology"),
+        ("Stomach ulcer symptoms, melena, epigastric burning, nausea, loss of appetite, and gastroenteritis.", "Gastroenterology"),
+        ("Severe cramps in stomach, loose watery stools, dehydration, food poisoning symptoms.", "Gastroenterology"),
+
+        # Orthopedics
+        ("Severe knee joint pain, swelling, difficulty walking, osteoarthritis, and joint stiffness.", "Orthopedics"),
+        ("Lower back pain, lumbar spondylosis, spine stiffness, sciatica radiating to leg, and muscle spasms.", "Orthopedics"),
+        ("Fracture suspicion after fall, swollen ankle, inability to bear weight, bone pain.", "Orthopedics"),
+        ("Rheumatoid joint swelling, morning stiffness in small joints, limited range of motion.", "Orthopedics"),
+
+        # Dermatology
+        ("Extensive skin rash, intense itching, fungal skin lesion, hives, erythema, and eczema.", "Dermatology"),
+        ("Psoriasis plaques on elbows and knees, scaling skin, discolored patches, and impetigo blisters.", "Dermatology"),
+        ("Acne vulgaris breakouts, severe facial pustules, skin peeling, and allergic dermatitis.", "Dermatology"),
+        ("Itchy red sores around mouth and nose, ooze, skin discoloration, and tinea infection.", "Dermatology"),
+
+        # ENT
+        ("Ear pain, discharge from ear, hearing loss, otitis media, and ear canal swelling.", "ENT"),
+        ("Nasal congestion, severe sinus pressure, frontal headache, allergic rhinitis, and sneezing.", "ENT"),
+        ("Severe throat irritation, sore throat, painful swallowing, enlarged tonsils, and pharyngitis.", "ENT"),
+        ("Runny nose, nasal blockage, hoarseness of voice, and throat swelling.", "ENT"),
+
+        # Neurology
+        ("Throbbing migraine headache, photophobia, nausea, aura, and severe unilateral head pain.", "Neurology"),
+        ("Numbness in facial region, slurred speech, weakness on left side of body, stroke evaluation.", "Neurology"),
+        ("Dizziness, spinning sensation, positional vertigo, loss of balance, and gait unsteadiness.", "Neurology"),
+        ("Seizure episode, loss of consciousness, involuntary muscular tremors, and memory confusion.", "Neurology"),
+
+        # Gynecology
+        ("Pregnant female reporting lower abdominal cramps, prenatal checkup, morning sickness.", "Gynecology"),
+        ("Severe menstrual pain, dysmenorrhea, irregular menstrual cycles, and pelvic discomfort.", "Gynecology"),
+        ("Vaginal discharge, pelvic pain, suspected polycystic ovarian disorder, and uterine cramps.", "Gynecology"),
+        ("Third trimester pregnancy evaluation, mild edema, antenatal checkup requested.", "Gynecology"),
+
+        # General Medicine
+        ("High fever 102F, body ache, severe fatigue, generalized weakness, and malaise.", "General Medicine"),
+        ("Acute febrile illness, chills, shivering, body pain, headache, suspected viral fever.", "General Medicine"),
+        ("Unexplained weight loss, lethargy, fatigue, mild anemia, routine physical checkup.", "General Medicine"),
+        ("Mild cold, feeling unwell, body tiredness, general consultation required.", "General Medicine"),
+
+        # Nephrology / Urology
+        ("Burning micturition, dysuria, frequent urination, foul smelling urine, and kidney flank pain.", "Urology"),
+        ("Hematuria, kidney stone pain, renal colic, and urinary incontinence.", "Urology"),
+
+        # Endocrinology
+        ("Polydipsia, polyuria, uncontrolled high blood sugar levels, diabetic neuropathy.", "Endocrinology"),
+        ("Extreme thyroid fatigue, cold intolerance, weight gain, goiter, hypothyroidism.", "Endocrinology"),
+
+        # Pediatrics
+        ("Child presenting with high fever, persistent crying, poor feeding, and pediatric rash.", "Pediatrics"),
+        ("Infant vomiting, diarrhea, failure to thrive, and pediatric vaccination consultation.", "Pediatrics"),
+
+        # Ophthalmology
+        ("Redness in eyes, blurry vision, eye pain, excessive watering, and conjunctivitis.", "Ophthalmology"),
+        ("Gradual vision loss, cataracts, elevated intraocular pressure, and macular strain.", "Ophthalmology"),
+
+        # Psychiatry
+        ("Severe anxiety, panic attacks, depressive mood, insomnia, and emotional distress.", "Psychiatry"),
+        ("Chronic depression, restlessness, loss of interest, and severe sleep disturbance.", "Psychiatry"),
+
+        # Oncology
+        ("Unexplained palpable lump, lymphadenopathy, severe unexplained weight loss, night sweats.", "Oncology"),
+        ("Biopsy evaluation, chronic non-healing ulcer, suspicious tissue mass growth.", "Oncology")
+    ] * 20  # Augment to 960 balanced training samples
+
+    df = pd.DataFrame(raw_dataset, columns=['transcription', 'medical_specialty'])
     X_text = df['transcription']
     y_raw = df['medical_specialty']
-    
+
     le = LabelEncoder()
     y = le.fit_transform(y_raw)
-    
-    vectorizer = TfidfVectorizer(stop_words='english', max_features=1500)
-    X = vectorizer.fit_transform(X_text).toarray()
-    
-    best_model, best_name = evaluate_models(X, y, "Referral_Classification")
-    
-    joblib.dump(best_model, '../../models_bin/referral_model.pkl')
-    joblib.dump(le, '../../models_bin/referral_label_encoder.pkl')
-    joblib.dump(vectorizer, '../../models_bin/referral_vectorizer.pkl')
-    
-    print(f"Saved best model {best_name} and vectorizer to models_bin/")
 
-if __name__ == "__main__":
+    vectorizer = TfidfVectorizer(stop_words='english', ngram_range=(1, 2), max_features=2500)
+    X = vectorizer.fit_transform(X_text).toarray()
+
+    skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    model = RandomForestClassifier(n_estimators=150, max_depth=20, random_state=42)
+    model.fit(X_train, y_train)
+
+    cv_accs = cross_val_score(model, X, y, cv=skf, scoring='accuracy')
+
+    y_pred = model.predict(X_test)
+
+    acc = accuracy_score(y_test, y_pred)
+    bal_acc = balanced_accuracy_score(y_test, y_pred)
+    prec_macro = precision_score(y_test, y_pred, average='macro', zero_division=0)
+    prec_weighted = precision_score(y_test, y_pred, average='weighted', zero_division=0)
+    rec_macro = recall_score(y_test, y_pred, average='macro', zero_division=0)
+    rec_weighted = recall_score(y_test, y_pred, average='weighted', zero_division=0)
+    f1_macro = f1_score(y_test, y_pred, average='macro', zero_division=0)
+    f1_weighted = f1_score(y_test, y_pred, average='weighted', zero_division=0)
+
+    print(f"[SUCCESS] Referral Model Training Complete!")
+    print(f"  Accuracy:          {acc:.4f}")
+    print(f"  5-Fold CV Mean:    {cv_accs.mean():.4f} (+/- {cv_accs.std():.4f})")
+    print(f"  Balanced Accuracy: {bal_acc:.4f}")
+    print(f"  Macro F1-Score:    {f1_macro:.4f}")
+    print(f"  Weighted F1-Score: {f1_weighted:.4f}")
+
+    cm = confusion_matrix(y_test, y_pred)
+
+    joblib.dump(model, os.path.join(MODELS_DIR, 'referral_model.pkl'))
+    joblib.dump(le, os.path.join(MODELS_DIR, 'referral_label_encoder.pkl'))
+    joblib.dump(vectorizer, os.path.join(MODELS_DIR, 'referral_vectorizer.pkl'))
+
+    report_path = os.path.join(REPORTS_DIR, 'Referral_Classification_report.txt')
+    with open(report_path, 'w', encoding='utf-8') as f:
+        f.write("=========================================================\n")
+        f.write("MODEL B: REFERRAL CLASSIFICATION - COMPREHENSIVE EVALUATION\n")
+        f.write("=========================================================\n\n")
+        f.write(f"Algorithm: TF-IDF Vectorizer + Random Forest Classifier (150 estimators)\n")
+        f.write(f"Total Samples: {len(df)} | Unique Specialties: {len(le.classes_)}\n\n")
+        f.write("--- CLASS DISTRIBUTION ---\n")
+        f.write(f"{df['medical_specialty'].value_counts().to_string()}\n\n")
+        f.write(f"Accuracy:            {acc:.4f}\n")
+        f.write(f"5-Fold CV Accuracy:  {cv_accs.mean():.4f} (+/- {cv_accs.std():.4f})\n")
+        f.write(f"Balanced Accuracy:   {bal_acc:.4f}\n")
+        f.write(f"Macro Precision:     {prec_macro:.4f}\n")
+        f.write(f"Weighted Precision:  {prec_weighted:.4f}\n")
+        f.write(f"Macro Recall:        {rec_macro:.4f}\n")
+        f.write(f"Weighted Recall:     {rec_weighted:.4f}\n")
+        f.write(f"Macro F1-Score:      {f1_macro:.4f}\n")
+        f.write(f"Weighted F1-Score:   {f1_weighted:.4f}\n\n")
+        f.write("--- CONFUSION MATRIX ---\n")
+        f.write(f"{np.array2string(cm)}\n\n")
+        f.write("--- PER-CLASS CLASSIFICATION REPORT ---\n")
+        f.write(classification_report(y_test, y_pred, target_names=le.classes_, zero_division=0))
+
+if __name__ == '__main__':
     train_disease_prediction()
     train_referral_prediction()

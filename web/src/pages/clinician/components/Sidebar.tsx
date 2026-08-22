@@ -8,6 +8,7 @@ import {
   Activity,
   ChevronRight,
   Settings,
+  Calendar,
   X
 } from 'lucide-react';
 import { useClinicianStore } from '../../../store/clinicianStore';
@@ -27,6 +28,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
   };
 
   const navItems = [
+    { name: 'Appointments', icon: Calendar, path: '/clinician/appointments' },
     { name: 'Referrals', icon: ArrowLeftRight, path: '/clinician/referrals' },
     { name: 'OPD Queue', icon: Users, path: '/clinician/queue' },
     { name: 'My Patients', icon: UserRound, path: '/clinician/patients' },

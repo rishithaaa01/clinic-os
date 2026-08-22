@@ -90,12 +90,13 @@ export default function LabDashboard() {
   });
 
   const handleUpload = (labOrderId) => {
-    if (!resultText.trim()) {
-      toast.error('Please enter a result value');
+    if (!resultText.trim() && !selectedFile) {
+      toast.error('Please enter a result value or attach a PDF report');
       return;
     }
+    const finalResultText = resultText.trim() || 'PDF Report Attached';
     setUploadingId(labOrderId);
-    uploadMutation.mutate({ labOrderId, resultText, notes, file: selectedFile });
+    uploadMutation.mutate({ labOrderId, resultText: finalResultText, notes, file: selectedFile });
   };
 
   const handleLogout = () => {
@@ -266,13 +267,13 @@ export default function LabDashboard() {
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex flex-wrap items-center gap-1.5 sm:gap-2 mb-1">
-                              <h3 className="font-bold text-gray-800 text-sm sm:text-base break-words">{order.test_name}</h3>
+                              <h3 className="font-bold text-gray-800 text-sm sm:text-base break-words">{order.test_name || order.test_type || order.name || 'General Lab Test'}</h3>
                               <span className={`text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase shrink-0 whitespace-nowrap ${urgencyColor[order.urgency] || urgencyColor.routine}`}>
                                 {order.urgency}
                               </span>
                             </div>
                             <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs text-gray-500">
-                              <span className="flex items-center gap-1 shrink-0 whitespace-nowrap"><User size={11} /> {order.patient_name}</span>
+                              <span className="flex items-center gap-1 shrink-0 whitespace-nowrap"><User size={11} /> {order.patient_name || 'Patient'}</span>
                               <span className="flex items-center gap-1 shrink-0 whitespace-nowrap"><Calendar size={11} /> {new Date(order.ordered_date).toLocaleDateString('en-IN')}</span>
                               <span className="truncate">Ordered by: {order.ordered_by}</span>
                             </div>
@@ -419,7 +420,7 @@ export default function LabDashboard() {
                       </div>
                       <div>
                         <div className="flex items-center gap-2 mb-1">
-                          <h3 className="font-bold text-gray-800">{order.test_name}</h3>
+                          <h3 className="font-bold text-gray-800">{order.test_name || order.test_type || order.name || 'General Lab Test'}</h3>
                           {order.ai_is_abnormal && (
                             <span className="bg-red-100 text-red-700 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase flex items-center gap-1">
                               <AlertTriangle size={9} /> Abnormal
@@ -427,36 +428,13 @@ export default function LabDashboard() {
                           )}
                         </div>
                         <div className="flex items-center gap-3 text-xs text-gray-500">
-                          <span className="flex items-center gap-1"><User size={11} /> {order.patient_name}</span>
+                          <span className="flex items-center gap-1"><User size={11} /> {order.patient_name || 'Patient'}</span>
                           <span>{new Date(order.result_date).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</span>
                           <span>by {order.resulted_by}</span>
                         </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      {(order.pdf_url || order._id || order.id) && (
-                        <a
-                          href={(() => {
-                            const backendBase = (import.meta.env.VITE_API_URL || 'https://ayu-disha.onrender.com/api').replace(/\/api\/?$/, '');
-                            if (!order.pdf_url) return `${backendBase}/api/lab/orders/${order._id || order.id}/pdf`;
-                            let rawUrl = String(order.pdf_url).replace(/^["']|["']$/g, '').trim();
-                            if (/^https?:\/\//i.test(rawUrl)) return rawUrl;
-                            return `${backendBase}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`;
-                          })()}
-                          onClick={async (e) => {
-                            if (Capacitor.getPlatform() === 'android') {
-                              e.preventDefault();
-                              const href = e.currentTarget.href;
-                              await Browser.open({ url: href });
-                            }
-                          }}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-semibold bg-blue-50 px-3 py-1.5 rounded-lg cursor-pointer"
-                        >
-                          <ExternalLink size={12} /> PDF
-                        </a>
-                      )}
                       <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full">Resulted</span>
                     </div>
                   </div>

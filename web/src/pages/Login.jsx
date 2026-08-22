@@ -46,6 +46,9 @@ export default function Login() {
   const [regDistrict, setRegDistrict] = useState('Chennai');
   const [regLanguage, setRegLanguage] = useState('en');
   const [regSpeciality, setRegSpeciality] = useState('');
+  const [regMedRegNum, setRegMedRegNum] = useState('');
+  const [regMedCouncil, setRegMedCouncil] = useState('Tamil Nadu Medical Council');
+  const [regQualification, setRegQualification] = useState('MBBS');
 
   const SPECIALITIES = [
     'General Medicine', 'Gynaecology', 'Obstetrics', 'Paediatrics',
@@ -176,6 +179,10 @@ export default function Login() {
         console.log('🚀 [RUNTIME DEBUG] Navigating to /lab');
         navigate('/lab');
         break;
+      case 'receptionist':
+        console.log('🚀 [RUNTIME DEBUG] Navigating to /receptionist');
+        navigate('/receptionist');
+        break;
       default:
         console.warn('⚠️ [RUNTIME DEBUG] Role mismatch in handleSuccessfulLogin! user.role:', user?.role, 'defaulting to /clinician');
         navigate('/clinician');
@@ -187,10 +194,11 @@ export default function Login() {
     setLoading(true);
     setError('');
     setSuccessMsg('');
+    const cleanEmail = email.trim().toLowerCase();
     try {
-      console.log('🔑 [RUNTIME DEBUG] handleCredentialsLogin executing for email:', email);
+      console.log('🔑 [RUNTIME DEBUG] handleCredentialsLogin executing for email:', cleanEmail);
       const res = await api.post('/auth/login', {
-        email: email,
+        email: cleanEmail,
         password: password
       });
       
@@ -200,8 +208,9 @@ export default function Login() {
       
       handleSuccessfulLogin(userData, res.data.access_token, res.data.refresh_token);
     } catch (err) {
-      console.error('❌ [RUNTIME DEBUG] handleCredentialsLogin error:', err);
-      setError(err.response?.data?.detail || 'Invalid email or password.');
+      console.error('❌ [RUNTIME DEBUG] handleCredentialsLogin error detail:', err.response?.data);
+      const detail = err.response?.data?.detail || err.response?.data?.message || err.message || 'Invalid email/mobile or password.';
+      setError(detail);
     } finally {
       setLoading(false);
     }
@@ -214,13 +223,25 @@ export default function Login() {
     setError('');
     setSuccessMsg('');
 
-    if ((regRole === 'doctor' || regRole === 'lab') && !regHospital) {
-      setError('Please select your hospital');
-      setLoading(false);
-      return;
+    if (regRole === 'doctor') {
+      if (!regHospital) {
+        setError('Please select your clinical hospital');
+        setLoading(false);
+        return;
+      }
+      if (!regSpeciality) {
+        setError('Please select your medical speciality');
+        setLoading(false);
+        return;
+      }
+      if (!regMedRegNum.trim()) {
+        setError('Please enter your Medical Registration Number');
+        setLoading(false);
+        return;
+      }
     }
-    if (regRole === 'doctor' && !regSpeciality) {
-      setError('Please select your medical speciality');
+    if (regRole === 'lab' && !regHospital) {
+      setError('Please select your laboratory / hospital');
       setLoading(false);
       return;
     }
@@ -241,13 +262,18 @@ export default function Login() {
         district: regDistrict,
         hospital: (regRole === 'doctor' || regRole === 'lab') ? regHospital : null,
         village: regRole === 'asha' ? regVillage : null,
-        speciality: regRole === 'doctor' ? regSpeciality : null
+        speciality: regRole === 'doctor' ? regSpeciality : null,
+        medical_registration_number: regRole === 'doctor' ? regMedRegNum.trim() : null,
+        medical_council: regRole === 'doctor' ? regMedCouncil : null,
+        qualification: regRole === 'doctor' ? regQualification : null
       };
       const res = await api.post('/auth/register', payload);
       setSuccessMsg('Account created successfully!');
       handleSuccessfulLogin(res.data.user, res.data.access_token, res.data.refresh_token);
     } catch (err) {
-      setError(err.response?.data?.detail || 'Failed to complete registration.');
+      console.error('❌ [RUNTIME DEBUG] handleRegister error detail:', err.response?.data);
+      const msg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Failed to complete registration.';
+      setError(msg);
     } finally {
       setLoading(false);
     }
@@ -855,26 +881,84 @@ export default function Login() {
                     </div>
                   )}
 
-                  {/* Speciality Selector — Doctors only */}
+                  {/* Doctor Verification Credentials — Doctors only */}
                   {regRole === 'doctor' && (
-                    <div className="space-y-2 animate-fadeIn">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-500">Medical Speciality</label>
-                      <div className="relative flex items-center border border-gray-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-[#1B6CA8] overflow-hidden">
-                        <div className="pl-4 text-gray-400">
-                          <Activity size={16} />
+                    <div className="space-y-4 animate-fadeIn">
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-500">Medical Registration Number *</label>
+                        <div className="relative flex items-center border border-gray-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-[#1B6CA8] overflow-hidden">
+                          <div className="pl-4 text-gray-400">
+                            <ShieldCheck size={16} />
+                          </div>
+                          <input
+                            type="text"
+                            value={regMedRegNum}
+                            onChange={(e) => setRegMedRegNum(e.target.value)}
+                            placeholder="e.g. TNMC-98765 or MMC-12345"
+                            className="w-full p-3 pl-3 outline-none text-sm text-gray-700 uppercase font-mono font-bold"
+                            required
+                          />
                         </div>
-                        <select
-                          value={regSpeciality}
-                          onChange={(e) => setRegSpeciality(e.target.value)}
-                          className="w-full p-3 bg-transparent outline-none text-sm text-gray-700 appearance-none bg-white cursor-pointer"
-                          required
-                        >
-                          <option value="">-- Select Speciality --</option>
-                          {SPECIALITIES.map(s => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                        <div className="pr-4 pointer-events-none text-gray-400 text-xs">▼</div>
+                      </div>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <label className="block text-xs font-bold uppercase tracking-wider text-gray-500">Medical Council *</label>
+                          <div className="relative flex items-center border border-gray-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-[#1B6CA8] overflow-hidden">
+                            <select
+                              value={regMedCouncil}
+                              onChange={(e) => setRegMedCouncil(e.target.value)}
+                              className="w-full p-3 pl-3 bg-transparent outline-none text-xs text-gray-700 font-semibold"
+                              required
+                            >
+                              <option value="Tamil Nadu Medical Council">Tamil Nadu Medical Council</option>
+                              <option value="Medical Council of India">Medical Council of India</option>
+                              <option value="Karnataka Medical Council">Karnataka Medical Council</option>
+                              <option value="Maharashtra Medical Council">Maharashtra Medical Council</option>
+                              <option value="Delhi Medical Council">Delhi Medical Council</option>
+                              <option value="Other State Medical Council">Other State Medical Council</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="block text-xs font-bold uppercase tracking-wider text-gray-500">Qualification *</label>
+                          <div className="relative flex items-center border border-gray-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-[#1B6CA8] overflow-hidden">
+                            <select
+                              value={regQualification}
+                              onChange={(e) => setRegQualification(e.target.value)}
+                              className="w-full p-3 pl-3 bg-transparent outline-none text-xs text-gray-700 font-semibold"
+                              required
+                            >
+                              <option value="MBBS">MBBS</option>
+                              <option value="MBBS, MD">MBBS, MD</option>
+                              <option value="MBBS, MS">MBBS, MS</option>
+                              <option value="MBBS, DNB">MBBS, DNB</option>
+                              <option value="DM / MCh">DM / MCh</option>
+                            </select>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-500">Medical Speciality *</label>
+                        <div className="relative flex items-center border border-gray-300 rounded-xl bg-white focus-within:ring-2 focus-within:ring-[#1B6CA8] overflow-hidden">
+                          <div className="pl-4 text-gray-400">
+                            <Activity size={16} />
+                          </div>
+                          <select
+                            value={regSpeciality}
+                            onChange={(e) => setRegSpeciality(e.target.value)}
+                            className="w-full p-3 bg-transparent outline-none text-sm text-gray-700 appearance-none bg-white cursor-pointer"
+                            required
+                          >
+                            <option value="">-- Select Speciality --</option>
+                            {SPECIALITIES.map(s => (
+                              <option key={s} value={s}>{s}</option>
+                            ))}
+                          </select>
+                          <div className="pr-4 pointer-events-none text-gray-400 text-xs">▼</div>
+                        </div>
                       </div>
                     </div>
                   )}

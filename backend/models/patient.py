@@ -39,6 +39,12 @@ class VisitResponse(BaseModel):
     prescriptions: List[Dict[str, Any]] = []
     follow_up_date: Optional[datetime] = None
     notes: Optional[str] = None
+    appointment_type: Optional[str] = None
+    referred_by: Optional[str] = None
+    required_specialty: Optional[str] = None
+    status: Optional[str] = None
+    referral_id: Optional[str] = None
+    risk_tag: Optional[str] = None
 
     class Config:
         populate_by_name = True

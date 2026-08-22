@@ -15,10 +15,23 @@ import { api } from '../../services/clinicianApi';
 import { Bell, Calendar, Menu } from 'lucide-react';
 import { format } from 'date-fns';
 
+import DoctorStatusScreen from './DoctorStatusScreen';
+import AppointmentsScreen from './AppointmentsScreen';
+
 export default function ClinicianApp() {
   const today = format(new Date(), 'EEEE, d MMMM yyyy');
   const { user } = useAuthStore();
   const { setDoctor } = useClinicianStore();
+
+  const isDoctorActive =
+    user?.role === 'doctor' &&
+    user?.verification_status === 'VERIFIED' &&
+    user?.hospital_status === 'APPROVED' &&
+    user?.account_status === 'ACTIVE';
+
+  if (user?.role === 'doctor' && !isDoctorActive) {
+    return <DoctorStatusScreen />;
+  }
   const [showNotifications, setShowNotifications] = useState(false);
   const [notifTop, setNotifTop] = useState(72);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -171,13 +184,14 @@ export default function ClinicianApp() {
           {/* Dynamic Content Area */}
           <div className="flex-1 p-4 sm:p-6 lg:p-8 pb-safe overflow-y-auto">
             <Routes>
+              <Route path="appointments" element={<AppointmentsScreen />} />
               <Route path="queue" element={<QueueScreen />} />
               <Route path="patients" element={<PatientsScreen />} />
               <Route path="referrals" element={<ReferralsScreen />} />
               <Route path="consultation/:visitId" element={<ConsultationScreen />} />
               <Route path="settings" element={<SettingsScreen />} />
-              <Route path="/" element={<Navigate to="/clinician/referrals" replace />} />
-              <Route path="*" element={<Navigate to="/clinician/referrals" replace />} />
+              <Route path="/" element={<Navigate to="/clinician/appointments" replace />} />
+              <Route path="*" element={<Navigate to="/clinician/appointments" replace />} />
             </Routes>
           </div>
         </main>

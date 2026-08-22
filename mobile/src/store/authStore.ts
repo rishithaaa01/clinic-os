@@ -7,10 +7,19 @@ interface User {
   role: string;
   mobile: string;
   email?: string;
-  language: string;
+  language?: string;
   hospital?: string;
   village?: string;
   district?: string;
+  verification_status?: string;
+  hospital_status?: string;
+  account_status?: string;
+  rejection_reason?: string;
+  medical_registration_number?: string;
+  medical_council?: string;
+  qualification?: string;
+  requested_hospital_id?: string;
+  speciality?: string;
 }
 
 interface AuthState {

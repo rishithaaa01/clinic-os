@@ -79,6 +79,15 @@ export default function AshaDashboard() {
   const [showVisitModal, setShowVisitModal] = useState(false);
   const [showReferralModal, setShowReferralModal] = useState(false);
   const [sentReferralDetails, setSentReferralDetails] = useState(null);
+  
+  // Referral Details & Follow-up State
+  const [showFollowUpModal, setShowFollowUpModal] = useState(false);
+  const [selectedRef, setSelectedRef] = useState(null);
+  const [fuObservation, setFuObservation] = useState('');
+  const [fuContacted, setFuContacted] = useState(true);
+  const [fuAttended, setFuAttended] = useState(true);
+  const [fuNewSymptoms, setFuNewSymptoms] = useState('');
+  const [fuSubmitting, setFuSubmitting] = useState(false);
 
   // Form States
   const [hhFamilyName, setHhFamilyName] = useState('');
@@ -111,23 +120,25 @@ export default function AshaDashboard() {
     setIsTranscribing(true);
     setFormError('');
     try {
+      console.log(`[WEB AUDIO UPLOAD] MIME: ${audioBlob.type || 'audio/webm'} | Size: ${audioBlob.size}B | Duration: ${duration}s | Name: voice_note.webm`);
+      
       const formData = new FormData();
       formData.append('file', audioBlob, 'voice_note.webm');
       
-      const res = await api.post('/asha/transcribe', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
-      if (res.data.transcript) {
-        setVisitSymptoms(prev => prev + (prev ? ' ' : '') + res.data.transcript);
+      const res = await api.post('/asha/transcribe', formData);
+      const text = res.data?.transcript || res.data?.transcription || '';
+      
+      if (text) {
+        setVisitSymptoms(prev => prev + (prev ? ' ' : '') + text);
         clearRecording();
+        setSuccessMessage("Voice note transcribed successfully!");
+        setTimeout(() => setSuccessMessage(''), 4000);
       } else {
-        setFormError("No speech detected. Please speak louder and retry.");
+        setFormError("We couldn't clearly process the recording. Please speak clearly and try again.");
       }
     } catch (err) {
-      console.error(err);
-      setFormError("Failed to transcribe audio. Verify your Groq API key.");
+      console.error("Web ASHA Voice Transcribe Error:", err);
+      setFormError("We couldn't clearly process the recording. Please try again.");
     } finally {
       setIsTranscribing(false);
     }
@@ -154,20 +165,20 @@ export default function AshaDashboard() {
     setIsAnalyzingRisk(true);
     setFormError('');
     try {
-      const selectedHh = households?.find(h => h.id === visitHhId);
-      const selectedMember = selectedHh?.members?.find(m => m.name === visitMemberName);
-      const age = selectedMember?.age || 30;
+      const selectedHh = households?.find(h => String(h.id || h._id) === String(visitHhId));
+      const selectedMember = selectedHh?.members?.find((m) => m.name === visitMemberName);
+      const age = parseInt(selectedMember?.age || '30', 10) || 30;
       const gender = selectedMember?.gender || 'female';
       
       const payload = {
-        member_name: visitMemberName,
+        member_name: visitMemberName || 'Patient',
         member_age: age,
         member_gender: gender,
-        visit_type: visitType,
+        visit_type: visitType || 'Routine Checkup',
         observations: {
-          symptoms: visitSymptoms
+          symptoms: visitSymptoms.trim()
         },
-        transcript: ""
+        transcript: visitSymptoms.trim()
       };
       
       console.log("Calling AI risk classifier with:", payload);
@@ -180,8 +191,9 @@ export default function AshaDashboard() {
       setSuccessMessage(`AI classification complete! Suggested: ${res.data.risk_level} risk. Please review details.`);
       setTimeout(() => setSuccessMessage(''), 6000);
     } catch (err) {
-      console.error(err);
-      setFormError("AI classification failed. Check your Groq API key.");
+      console.error("AI Risk Classification Error:", err);
+      const detailMsg = err.response?.data?.detail || "AI classification is temporarily unavailable. Please try again.";
+      setFormError(detailMsg);
     } finally {
       setIsAnalyzingRisk(false);
     }
@@ -208,14 +220,11 @@ export default function AshaDashboard() {
             const formData = new FormData();
             formData.append('file', blob, 'voice_note.webm');
             
-            const transRes = await api.post('/asha/transcribe', formData, {
-              headers: {
-                'Content-Type': 'multipart/form-data'
-              }
-            });
-            if (transRes.data.transcript) {
+            const transRes = await api.post('/asha/transcribe', formData);
+            const text = transRes.data?.transcript || transRes.data?.transcription || '';
+            if (text) {
               finalVisit.observations.symptoms = (finalVisit.observations.symptoms || '') + 
-                (finalVisit.observations.symptoms ? ' ' : '') + transRes.data.transcript;
+                (finalVisit.observations.symptoms ? ' ' : '') + text;
               finalVisit.needs_transcription = false;
               finalVisit.needs_ai = true; // Symptoms updated, run AI classification
             }
@@ -545,6 +554,7 @@ export default function AshaDashboard() {
     try {
       const payload = {
         household_id: refHhId || "AUTO_ASSIGNED",
+        patient_id: refPatientName || "unknown",
         to_hospital_id: refHospital,
         urgency: refUrgency,
         ai_summary: refNotes || 'Patient referred for EMR consultation.',
@@ -554,17 +564,49 @@ export default function AshaDashboard() {
       setShowReferralModal(false);
       setSentReferralDetails({
         hospital: res.to_hospital_id || refHospital,
-        speciality: res.to_speciality || 'General Medicine',
-        doctor: res.doctor_name || res.assigned_doctor || null,
+        speciality: res.to_speciality || res.assigned_specialty || 'General Medicine',
+        doctor: res.doctor_name || res.assigned_doctor_name || null,
         status: 'Awaiting doctor assignment'
       });
       setRefNotes('');
+      setRefPatientName('');
       refetchRef();
       refetchStats();
     } catch (err) {
       setFormError(err.response?.data?.detail || 'Failed to create referral.');
     } finally {
       setFormLoading(false);
+    }
+  };
+
+  const handleRecordFollowUpSubmit = async (e) => {
+    e.preventDefault();
+    if (!selectedRef) return;
+    if (!fuObservation.trim()) {
+      setFormError('Please enter your community follow-up observations.');
+      return;
+    }
+    setFuSubmitting(true);
+    setFormError('');
+    try {
+      await api.post(`/asha/referrals/${selectedRef.id}/follow-up`, {
+        patient_contacted: fuContacted,
+        attended_referral: fuAttended,
+        follow_up_observation: fuObservation.trim(),
+        new_symptoms_reported: fuNewSymptoms.trim() || null,
+        action_required: fuAttended ? 'Routine follow-up' : 'Needs visit encouragement'
+      });
+      setShowFollowUpModal(false);
+      setFuObservation('');
+      setFuNewSymptoms('');
+      setSelectedRef(null);
+      refetchRef();
+      setSuccessMessage('Community follow-up observation recorded successfully.');
+      setTimeout(() => setSuccessMessage(''), 4000);
+    } catch (err) {
+      setFormError(err.response?.data?.detail || 'We couldn’t record the follow-up right now. Please try again.');
+    } finally {
+      setFuSubmitting(false);
     }
   };
 
@@ -1037,7 +1079,8 @@ export default function AshaDashboard() {
                         <th className="pb-3">Referred Facility</th>
                         <th className="pb-3">Urgency</th>
                         <th className="pb-3">Date Dispatched</th>
-                        <th className="pb-3">Clinical Status</th>
+                        <th className="pb-3">Referral Status</th>
+                        <th className="pb-3 text-right pr-4">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-50 text-sm">
@@ -1055,21 +1098,34 @@ export default function AshaDashboard() {
                           <td className="py-4 text-gray-500 font-semibold">{ref.sent_date}</td>
                           <td className="py-4">
                             <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold uppercase ${
-                              ref.status === 'seen'
+                              ref.status === 'completed'
                                 ? 'bg-green-50 text-green-600'
-                                : 'bg-yellow-50 text-yellow-600'
+                                : 'bg-amber-50 text-amber-700'
                             }`}>
                               <span className={`w-1.5 h-1.5 rounded-full ${
-                                ref.status === 'seen' ? 'bg-green-600' : 'bg-yellow-500'
+                                ref.status === 'completed' ? 'bg-green-600' : 'bg-amber-500'
                               }`} />
-                              {ref.status}
+                              {ref.display_status || ref.status || 'Referral Active'}
                             </span>
+                          </td>
+                          <td className="py-4 text-right pr-4">
+                            <button
+                              onClick={() => { setSelectedRef(ref); setShowFollowUpModal(true); }}
+                              className="px-3 py-1.5 bg-[#1B6CA8] hover:bg-[#155A8A] text-white text-xs font-bold rounded-lg transition-colors shadow-sm"
+                            >
+                              Record Follow-Up
+                            </button>
                           </td>
                         </tr>
                       ))}
+                      {referrals?.length === 0 && !refLoading && (
+                        <tr>
+                          <td colSpan={6} className="py-8 text-center text-gray-400">No referrals have been created yet.</td>
+                        </tr>
+                      )}
                       {refLoading && (
                         <tr>
-                          <td colSpan={5} className="py-8 text-center text-gray-400">Loading referral database queue...</td>
+                          <td colSpan={6} className="py-8 text-center text-gray-400">Loading referral database queue...</td>
                         </tr>
                       )}
                     </tbody>
@@ -1095,14 +1151,24 @@ export default function AshaDashboard() {
                       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-500 pt-2 border-t border-gray-100">
                         <span>Sent: {ref.sent_date}</span>
                         <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold uppercase ${
-                          ref.status === 'seen' ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'
+                          ref.status === 'completed' ? 'bg-green-50 text-green-600' : 'bg-amber-50 text-amber-700'
                         }`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${ref.status === 'seen' ? 'bg-green-600' : 'bg-yellow-500'}`} />
-                          {ref.status}
+                          <span className={`w-1.5 h-1.5 rounded-full ${ref.status === 'completed' ? 'bg-green-600' : 'bg-amber-500'}`} />
+                          {ref.display_status || ref.status}
                         </span>
                       </div>
+
+                      <button
+                        onClick={() => { setSelectedRef(ref); setShowFollowUpModal(true); }}
+                        className="w-full mt-2 py-2 bg-[#1B6CA8] hover:bg-[#155A8A] text-white text-xs font-bold rounded-xl transition-colors"
+                      >
+                        Record Follow-Up
+                      </button>
                     </div>
                   ))}
+                  {referrals?.length === 0 && !refLoading && (
+                    <div className="py-8 text-center text-gray-400 font-medium">No referrals have been created yet.</div>
+                  )}
                   {refLoading && (
                     <div className="py-8 text-center text-gray-400 font-medium">Loading referral database queue...</div>
                   )}
@@ -1373,9 +1439,9 @@ export default function AshaDashboard() {
                   >
                     <option value="">{visitHhId ? '-- Select member --' : '-- Select household first --'}</option>
                     {visitHhId && households?.find(h => h.id === visitHhId)?.members?.map((m, i) => (
-                      <option key={i} value={m.name}>
+                      <option key={i} value={m.patient_id || m.member_id || m.name}>
                         {m.name}{m.age ? ` (${m.age}y` : ''}{m.gender ? `, ${m.gender}` : ''}{m.age ? ')' : ''}
-                        {m.details ? ` — ${m.details}` : ''}
+                        {m.patient_id ? ` [ID: ${m.patient_id.slice(-6).toUpperCase()}]` : ''}
                       </option>
                     ))}
                   </select>
@@ -1551,15 +1617,22 @@ export default function AshaDashboard() {
                   </select>
                 </div>
                 <div className="space-y-1">
-                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500">Patient Name</label>
-                  <input
-                    type="text"
+                  <label className="text-xs font-bold uppercase tracking-wider text-gray-500">Patient Member</label>
+                  <select
                     value={refPatientName}
                     onChange={(e) => setRefPatientName(e.target.value)}
-                    placeholder="e.g. Ramesh Kumar"
-                    className="w-full p-3 border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-sm"
+                    className="w-full p-3 bg-white border border-gray-300 rounded-xl outline-none focus:ring-2 focus:ring-amber-500 text-sm cursor-pointer"
                     required
-                  />
+                    disabled={!refHhId}
+                  >
+                    <option value="">{refHhId ? '-- Select Patient --' : '-- Select Household First --'}</option>
+                    {refHhId && households?.find(h => h.id === refHhId)?.members?.map((m, i) => (
+                      <option key={i} value={m.patient_id || m.member_id || m.name}>
+                        {m.name}{m.age ? ` (${m.age}y` : ''}{m.gender ? `, ${m.gender}` : ''}{m.age ? ')' : ''}
+                        {m.patient_id ? ` [ID: ${m.patient_id.slice(-6).toUpperCase()}]` : ''}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 
@@ -1667,6 +1740,100 @@ export default function AshaDashboard() {
             >
               Done
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Record Follow-Up Modal */}
+      {showFollowUpModal && selectedRef && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-white rounded-3xl p-6 max-w-lg w-full shadow-2xl border border-gray-100 animate-fadeIn">
+            <div className="flex justify-between items-center pb-4 border-b border-gray-100 mb-4">
+              <div>
+                <h3 className="text-xl font-bold text-gray-800 font-mukta">Record Community Follow-Up</h3>
+                <p className="text-xs text-gray-500">Patient: <span className="font-bold text-gray-800">{selectedRef.patient_name}</span></p>
+              </div>
+              <button onClick={() => { setShowFollowUpModal(false); setSelectedRef(null); }} className="text-gray-400 hover:text-gray-600 font-bold text-lg">✕</button>
+            </div>
+
+            <form onSubmit={handleRecordFollowUpSubmit} className="space-y-4">
+              {formError && (
+                <div className="p-3 bg-red-50 border-l-4 border-red-500 text-red-700 text-xs font-semibold rounded">
+                  {formError}
+                </div>
+              )}
+
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+                <p className="text-xs text-gray-500">Referred Hospital: <span className="font-bold text-gray-800">{selectedRef.referred_to || selectedRef.to_hospital_id}</span></p>
+                <p className="text-xs text-[#1B6CA8] font-bold mt-1">Status: {selectedRef.display_status || selectedRef.status}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-bold uppercase text-gray-500 block mb-1">Contacted Patient?</label>
+                  <select
+                    value={fuContacted ? "yes" : "no"}
+                    onChange={(e) => setFuContacted(e.target.value === "yes")}
+                    className="w-full p-2.5 bg-white border border-gray-300 rounded-xl text-xs font-bold"
+                  >
+                    <option value="yes">Yes, Contacted</option>
+                    <option value="no">No</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-xs font-bold uppercase text-gray-500 block mb-1">Visited Hospital OPD?</label>
+                  <select
+                    value={fuAttended ? "yes" : "no"}
+                    onChange={(e) => setFuAttended(e.target.value === "yes")}
+                    className="w-full p-2.5 bg-white border border-gray-300 rounded-xl text-xs font-bold"
+                  >
+                    <option value="yes">Yes, Attended Referral</option>
+                    <option value="no">Not Yet</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-gray-500 block mb-1">Community Observations *</label>
+                <textarea
+                  value={fuObservation}
+                  onChange={(e) => setFuObservation(e.target.value)}
+                  placeholder="Record post-referral community health observations..."
+                  rows={3}
+                  className="w-full p-3 border border-gray-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#1B6CA8]"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold uppercase text-gray-500 block mb-1">New Symptoms Reported (Optional)</label>
+                <input
+                  type="text"
+                  value={fuNewSymptoms}
+                  onChange={(e) => setFuNewSymptoms(e.target.value)}
+                  placeholder="Any new symptoms or complaints..."
+                  className="w-full p-3 border border-gray-300 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#1B6CA8]"
+                />
+              </div>
+
+              <div className="flex gap-3 justify-end pt-2">
+                <button
+                  type="button"
+                  onClick={() => { setShowFollowUpModal(false); setSelectedRef(null); }}
+                  className="px-4 py-2.5 rounded-xl border border-gray-300 text-gray-600 font-semibold text-xs hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={fuSubmitting}
+                  className="px-5 py-2.5 bg-[#1B6CA8] hover:bg-[#155A8A] text-white font-bold text-xs rounded-xl shadow-sm transition-all"
+                >
+                  {fuSubmitting ? 'Saving...' : 'Save Follow-Up'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -16,7 +16,14 @@ export default function PatientsScreen() {
       setLoading(true);
       const res = await api.get('/clinician/patients');
       const data = Array.isArray(res.data) ? res.data : [];
-      setPatients(data);
+      const seen = new Set();
+      const unique = data.filter((p: any) => {
+        const id = p.patient_id || p._id || p.id;
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
+      setPatients(unique);
     } catch (err) {
       console.log('Error fetching patients', err);
     } finally {
@@ -26,6 +33,10 @@ export default function PatientsScreen() {
 
   useEffect(() => {
     fetchPatients();
+    const interval = setInterval(() => {
+      fetchPatients();
+    }, 4000);
+    return () => clearInterval(interval);
   }, []);
 
   const filteredPatients = patients.filter(patient => {

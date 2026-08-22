@@ -1,31 +1,49 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import api from '../services/clinicianApi';
 
-export function useDifferential(symptoms: string, patientId: string | null) {
+export function useDifferential(symptoms: string, patientId?: string | null) {
   const [diagnoses, setDiagnoses] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!symptoms || symptoms.length < 10 || !patientId) {
+  const fetchDifferential = useCallback(async (syms: string, pid?: string | null) => {
+    if (!syms || syms.trim().length < 3) {
       setDiagnoses([]);
       return;
     }
 
-    // Debounce the API call by 1.5 seconds to avoid excessive Groq calls
-    const timer = setTimeout(async () => {
-      setIsLoading(true);
-      try {
-        const data = await api.getDifferential(symptoms, patientId);
-        setDiagnoses(data.diagnoses || []);
-      } catch (err) {
-        console.error("Differential fetch error:", err);
-      } finally {
-        setIsLoading(false);
-      }
-    }, 1500);
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await api.getDifferential(syms.trim(), pid || '');
+      setDiagnoses(data?.diagnoses || []);
+    } catch (err: any) {
+      console.error("Differential fetch error:", err);
+      setError(err?.response?.data?.detail || err?.message || 'Failed to fetch differential');
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!symptoms || symptoms.trim().length < 3) {
+      setDiagnoses([]);
+      return;
+    }
+
+    // Debounce the API call by 600ms for fast, responsive live updates
+    const timer = setTimeout(() => {
+      fetchDifferential(symptoms, patientId);
+    }, 600);
 
     return () => clearTimeout(timer);
-  }, [symptoms, patientId]);
+  }, [symptoms, patientId, fetchDifferential]);
 
-  return { diagnoses, isLoading };
+  return { 
+    diagnoses, 
+    isLoading, 
+    error,
+    refetch: () => fetchDifferential(symptoms, patientId)
+  };
 }
+

@@ -4,26 +4,29 @@ from datetime import datetime
 
 class MemberCreate(BaseModel):
     name: str
-    age: int
-    gender: str
+    age: Optional[int] = 30
+    gender: Optional[str] = "male"
+    relation: Optional[str] = "Member"
     patient_id: Optional[str] = None
 
 class HouseholdCreate(BaseModel):
     family_name: str
-    village: str
-    block: str
-    district: str
-    members: List[MemberCreate]
+    head_name: Optional[str] = None
+    contact_phone: Optional[str] = None
+    village: Optional[str] = "Rural Village"
+    block: Optional[str] = "Local Block"
+    district: Optional[str] = "Rural District"
+    members: Optional[List[MemberCreate]] = []
 
 class VisitCreate(BaseModel):
     household_id: str
     member_id: str
-    visit_type: str
-    observations: Dict[str, Any]
+    visit_type: Optional[str] = "Home Visit Screening"
+    observations: Optional[Dict[str, Any]] = {}
     voice_notes: Optional[str] = None
-    risk_level: str
-    ai_reasoning: str
-    ai_recommendation: str
+    risk_level: Optional[str] = "WATCH"
+    ai_reasoning: Optional[str] = "Screened by ASHA worker with vitals"
+    ai_recommendation: Optional[str] = "Follow up as appropriate"
 
 class RiskClassifyRequest(BaseModel):
     observations: Any = {}
@@ -38,6 +41,9 @@ class RiskClassifyResponse(BaseModel):
     reasoning: str
     recommendation: str
     refer_to_doctor: bool
+    predicted_disease: Optional[str] = "General Assessment"
+    confidence: Optional[float] = 0.85
+    recommended_specialty: Optional[str] = "General Medicine"
 
 class ReferralCreate(BaseModel):
     patient_id: Optional[str] = "unknown"

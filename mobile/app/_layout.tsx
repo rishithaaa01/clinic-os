@@ -45,7 +45,20 @@ function AuthGuard() {
       if (inAuthGroup || !segments.length) {
         console.log('[AuthGuard] Redirecting to role:', user?.role);
         if (user?.role === 'doctor') {
-          router.replace('/(doctor)');
+          const isDoctorActive =
+            user?.verification_status === 'VERIFIED' &&
+            user?.hospital_status === 'APPROVED' &&
+            user?.account_status === 'ACTIVE';
+
+          if (!isDoctorActive) {
+            router.replace('/(doctor)/verification-status' as any);
+          } else {
+            router.replace('/(doctor)');
+          }
+        } else if (user?.role === 'receptionist') {
+          router.replace('/(receptionist)' as any);
+        } else if (user?.role === 'asha') {
+          router.replace('/(asha)');
         } else if (user?.role === 'patient') {
           router.replace('/(patient)');
         } else if (user?.role === 'lab') {

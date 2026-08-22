@@ -1,0 +1,118 @@
+=========================================================
+MODEL A: DISEASE PREDICTION - COMPREHENSIVE EVALUATION
+=========================================================
+
+Algorithm: Random Forest Classifier (150 estimators, max_depth=25)
+Total Samples: 4920 | Unique Classes: 41 | Features: 132
+
+--- CLASS DISTRIBUTION ---
+prognosis
+Fungal infection                           120
+Allergy                                    120
+GERD                                       120
+Chronic cholestasis                        120
+Drug Reaction                              120
+Peptic ulcer diseae                        120
+AIDS                                       120
+Diabetes                                   120
+Gastroenteritis                            120
+Bronchial Asthma                           120
+Hypertension                               120
+Migraine                                   120
+Cervical spondylosis                       120
+Paralysis (brain hemorrhage)               120
+Jaundice                                   120
+Malaria                                    120
+Chicken pox                                120
+Dengue                                     120
+Typhoid                                    120
+hepatitis A                                120
+Hepatitis B                                120
+Hepatitis C                                120
+Hepatitis D                                120
+Hepatitis E                                120
+Alcoholic hepatitis                        120
+Tuberculosis                               120
+Common Cold                                120
+Pneumonia                                  120
+Dimorphic hemmorhoids(piles)               120
+Heart attack                               120
+Varicose veins                             120
+Hypothyroidism                             120
+Hyperthyroidism                            120
+Hypoglycemia                               120
+Osteoarthristis                            120
+Arthritis                                  120
+(vertigo) Paroymsal  Positional Vertigo    120
+Acne                                       120
+Urinary tract infection                    120
+Psoriasis                                  120
+Impetigo                                   120
+
+Accuracy:            0.9980
+5-Fold CV Accuracy:  0.9974 (+/- 0.0014)
+Balanced Accuracy:   0.9980
+Macro Precision:     0.9980
+Weighted Precision:  0.9980
+Macro Recall:        0.9980
+Weighted Recall:     0.9980
+Macro F1-Score:      0.9980
+Weighted F1-Score:   0.9980
+
+--- CONFUSION MATRIX ---
+[[24  0  0 ...  0  0  0]
+ [ 0 24  0 ...  0  0  0]
+ [ 0  0 23 ...  0  0  0]
+ ...
+ [ 0  0  0 ... 24  0  0]
+ [ 0  0  0 ...  0 24  0]
+ [ 0  0  0 ...  0  0 24]]
+
+--- PER-CLASS CLASSIFICATION REPORT ---
+                                         precision    recall  f1-score   support
+
+(vertigo) Paroymsal  Positional Vertigo       1.00      1.00      1.00        24
+                                   AIDS       1.00      1.00      1.00        24
+                                   Acne       1.00      0.96      0.98        24
+                    Alcoholic hepatitis       1.00      1.00      1.00        24
+                                Allergy       0.96      1.00      0.98        24
+                              Arthritis       1.00      1.00      1.00        24
+                       Bronchial Asthma       1.00      1.00      1.00        24
+                   Cervical spondylosis       1.00      1.00      1.00        24
+                            Chicken pox       1.00      1.00      1.00        24
+                    Chronic cholestasis       1.00      1.00      1.00        24
+                            Common Cold       1.00      1.00      1.00        24
+                                 Dengue       1.00      1.00      1.00        24
+                               Diabetes       1.00      1.00      1.00        24
+           Dimorphic hemmorhoids(piles)       1.00      1.00      1.00        24
+                          Drug Reaction       1.00      1.00      1.00        24
+                       Fungal infection       1.00      1.00      1.00        24
+                                   GERD       1.00      1.00      1.00        24
+                        Gastroenteritis       1.00      1.00      1.00        24
+                           Heart attack       1.00      1.00      1.00        24
+                            Hepatitis B       1.00      1.00      1.00        24
+                            Hepatitis C       1.00      1.00      1.00        24
+                            Hepatitis D       0.96      1.00      0.98        24
+                            Hepatitis E       1.00      0.96      0.98        24
+                           Hypertension       1.00      1.00      1.00        24
+                        Hyperthyroidism       1.00      1.00      1.00        24
+                           Hypoglycemia       1.00      1.00      1.00        24
+                         Hypothyroidism       1.00      1.00      1.00        24
+                               Impetigo       1.00      1.00      1.00        24
+                               Jaundice       1.00      1.00      1.00        24
+                                Malaria       1.00      1.00      1.00        24
+                               Migraine       1.00      1.00      1.00        24
+                        Osteoarthristis       1.00      1.00      1.00        24
+           Paralysis (brain hemorrhage)       1.00      1.00      1.00        24
+                    Peptic ulcer diseae       1.00      1.00      1.00        24
+                              Pneumonia       1.00      1.00      1.00        24
+                              Psoriasis       1.00      1.00      1.00        24
+                           Tuberculosis       1.00      1.00      1.00        24
+                                Typhoid       1.00      1.00      1.00        24
+                Urinary tract infection       1.00      1.00      1.00        24
+                         Varicose veins       1.00      1.00      1.00        24
+                            hepatitis A       1.00      1.00      1.00        24
+
+                               accuracy                           1.00       984
+                              macro avg       1.00      1.00      1.00       984
+                           weighted avg       1.00      1.00      1.00       984

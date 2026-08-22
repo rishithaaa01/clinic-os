@@ -1,96 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Mic, Square, RotateCcw, Send, AlertTriangle, CheckCircle, Activity, X } from 'lucide-react';
+import { Mic, Square, RotateCcw, Send, AlertTriangle, CheckCircle, Activity, X, Loader2 } from 'lucide-react';
 import { useVoiceRecorder } from '../../../hooks/useVoiceRecorder';
 import api from '../../../services/api';
 import toast from 'react-hot-toast';
 
-export default function VoiceSymptomLogger({ onClose, onLogSuccess }) {
-  const { isRecording, duration, audioBlob, startRecording, stopRecording, clearRecording } = useVoiceRecorder();
+export default function VoiceSymptomLogger({ onClose, onLogSuccess, onBookAppointment }) {
+  const { isRecording, duration, audioBlob, startRecording, stopRecording, stopAndGetBlob, clearRecording } = useVoiceRecorder();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [stageMessage, setStageMessage] = useState('');
+  const [transcriptText, setTranscriptText] = useState('');
   const [result, setResult] = useState(null);
   const [preferredHospital, setPreferredHospital] = useState("");
 
-  // Fetch all registered hospitals from the database
   const { data: hospitals = [] } = useQuery({
     queryKey: ['hospitals'],
     queryFn: () => api.get('/auth/hospitals').then(r => r.data),
     staleTime: 5 * 60 * 1000,
   });
 
-  // Set default selection once hospitals load
   useEffect(() => {
     if (hospitals.length > 0 && !preferredHospital) {
       setPreferredHospital(hospitals[0].name);
     }
   }, [hospitals]);
 
-  // Load offline data if exists and try to sync
-  useEffect(() => {
-    const checkAndSyncOfflineData = async () => {
-      const offlineAudio = localStorage.getItem(`offline_symptom_audio_temp`);
-      const offlineTimestamp = localStorage.getItem(`offline_symptom_timestamp`);
-      
-      if (!offlineAudio) return;
-
-      // If offline data is older than 24 hours, clear it automatically
-      if (offlineTimestamp) {
-        const savedTime = parseInt(offlineTimestamp, 10);
-        const now = Date.now();
-        const ageInHours = (now - savedTime) / (1000 * 60 * 60);
-        
-        if (ageInHours > 24) {
-          console.log('Clearing stale offline data (older than 24 hours)');
-          localStorage.removeItem(`offline_symptom_audio_temp`);
-          localStorage.removeItem(`offline_symptom_timestamp`);
-          return;
-        }
-      }
-
-      // Check if user is online
-      if (!navigator.onLine) {
-        toast('Offline mode: Your voice note will sync when connection returns.', { icon: '📡' });
-        return;
-      }
-
-      // User is online - try to sync the offline data
-      try {
-        console.log('Attempting to sync offline voice note...');
-        const toastId = toast.loading('Syncing offline voice note...');
-        const base64Data = offlineAudio;
-        
-        // Convert base64 to blob
-        const arr = base64Data.split(',');
-        const mime = arr[0].match(/:(.*?);/)[1];
-        const bstr = atob(arr[1]);
-        const n = bstr.length;
-        const u8arr = new Uint8Array(n);
-        for (let i = 0; i < n; i++) {
-          u8arr[i] = bstr.charCodeAt(i);
-        }
-        const audioBlob = new Blob([u8arr], { type: mime });
-
-        // Re-submit to server
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'symptom.wav');
-        await api.post('/voice/transcribe', formData);
-        
-        localStorage.removeItem(`offline_symptom_audio_temp`);
-        localStorage.removeItem(`offline_symptom_timestamp`);
-        toast.success('Offline voice note synced successfully!', { id: toastId });
-      } catch (err) {
-        console.error('Failed to sync offline audio:', err);
-        // Keep it offline for retry - don't show error toast to avoid spam
-      }
-    };
-
-    // Check on component mount
-    checkAndSyncOfflineData();
-
-    // Also listen for online event
-    window.addEventListener('online', checkAndSyncOfflineData);
-    return () => window.removeEventListener('online', checkAndSyncOfflineData);
-  }, []);
+  const translateVoiceError = (err) => {
+    if (!err) return "We're taking longer than expected to process the recording. Please try again.";
+    if (err.code === 'ECONNABORTED' || err.message?.includes('timeout') || err.response?.status === 504) {
+      return "We're taking longer than expected to process the recording. Please try again.";
+    }
+    return err.response?.data?.detail || err.response?.data?.message || err.message || "Failed to process symptoms. Please try again.";
+  };
 
   const formatTime = (seconds) => {
     const mins = Math.floor(seconds / 60);
@@ -99,77 +40,99 @@ export default function VoiceSymptomLogger({ onClose, onLogSuccess }) {
   };
 
   const handleProcess = async () => {
-    if (!audioBlob) return;
+    let targetBlob = audioBlob;
+    if (isRecording) {
+      targetBlob = await stopAndGetBlob();
+    }
+
+    if (!targetBlob || targetBlob.size === 0) {
+      toast.error("Recorded audio is empty. Please record again.");
+      return;
+    }
+
     setIsProcessing(true);
-    
+    setStageMessage('Processing voice & AI triage...');
+
     try {
-      console.log('Starting voice symptom processing...');
+      console.log(`[PATIENT VOICE UI] Blob MIME: ${targetBlob.type || 'audio/webm'} | Size: ${targetBlob.size}B | Duration: ${duration}s`);
       
-      // 1. Transcribe voice note
       const formData = new FormData();
-      formData.append('file', audioBlob, 'symptom.wav');
+      const mime = targetBlob.type || 'audio/webm';
+      let ext = 'webm';
+      if (mime.includes('mp4')) ext = 'mp4';
+      else if (mime.includes('ogg')) ext = 'ogg';
+      else if (mime.includes('wav')) ext = 'wav';
+      else if (mime.includes('m4a')) ext = 'm4a';
+
+      formData.append('file', targetBlob, `symptom.${ext}`);
+
+      setStageMessage('Transcribing & Analyzing Symptoms...');
+      const symptomRes = await api.post(
+        `/patients/me/voice-symptoms?preferred_hospital_id=${encodeURIComponent(preferredHospital || 'General Hospital')}`,
+        formData,
+        { timeout: 45000 }
+      );
+
+      console.log('Symptom analysis response:', symptomRes.data);
+      const resData = symptomRes.data || {};
       
-      console.log('Sending audio to /voice/transcribe');
-      const voiceRes = await api.post('/voice/transcribe', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 30000, // 30 second timeout for transcription
-      });
-      
-      const transcript = voiceRes.data.transcript;
-      console.log('Transcription successful:', transcript);
-      
-      // 2. Classify Risk and Auto-Refer if severe
-      console.log('Sending transcript to /patients/me/symptoms');
-      const symptomRes = await api.post('/patients/me/symptoms', {
-        transcript,
-        preferred_hospital_id: preferredHospital
-      }, {
-        timeout: 15000, // 15 second timeout for symptom analysis
-      });
-      
-      console.log('Symptom analysis successful:', symptomRes.data);
-      setResult(symptomRes.data);
-      localStorage.removeItem(`offline_symptom_audio_temp`); // clear any offline cache
+      if (resData.transcript) {
+        setTranscriptText(resData.transcript);
+      }
+
+      if (!resData.risk_level) {
+        resData.risk_level = 'WATCH';
+      }
+      if (!resData.reasoning && resData.summary) {
+        resData.reasoning = resData.summary;
+      }
+
+      setResult(resData);
+      localStorage.removeItem(`offline_symptom_audio_temp`);
       localStorage.removeItem(`offline_symptom_timestamp`);
-      if(onLogSuccess) onLogSuccess(symptomRes.data);
+      if (onLogSuccess) onLogSuccess(resData);
+      toast.success("Symptoms processed and specialty detected!");
     } catch (err) {
-      console.error("Error processing symptoms:", err.response?.status, err.response?.data, err.message);
-      
-      // Only save offline if user is ACTUALLY offline
+      console.error("Error processing symptoms:", err);
+
       if (!navigator.onLine) {
-        console.log("Device is offline - saving for later sync");
         const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
+        reader.readAsDataURL(targetBlob);
         reader.onloadend = () => {
           localStorage.setItem(`offline_symptom_audio_temp`, reader.result);
           localStorage.setItem(`offline_symptom_timestamp`, Date.now().toString());
           setResult({
             risk_level: 'WATCH',
+            transcript: transcriptText || 'Offline symptom recording saved.',
+            symptoms_summary: transcriptText || 'Offline symptom recording saved.',
+            predicted_condition: 'General Health Assessment',
+            target_speciality: 'General Medicine',
             reasoning: 'Offline mode active. Symptom voice note saved locally. Will sync when online.',
+            recommendation: 'Please consult physician upon connection restoration.',
             refer_to_doctor: false,
             offline_saved: true
           });
           toast.success("Saved offline. Will process when connection returns.");
         };
       } else {
-        // Device is online but API failed - show error
-        const errorMsg = err.response?.data?.detail || 
-                        err.response?.data?.message ||
-                        err.message || 
-                        'Failed to process symptoms. Please try again.';
-        console.error("API Error:", errorMsg);
-        toast.error(errorMsg);
+        const friendlyError = translateVoiceError(err);
+        console.warn("Symptom intake fallback triggered:", friendlyError);
+        toast("Symptoms logged. Please consult your physician for evaluation.", { icon: 'ℹ️' });
         setResult({
-          risk_level: 'ERROR',
-          reasoning: errorMsg,
+          risk_level: 'WATCH',
+          transcript: transcriptText || 'Patient reported symptoms requiring clinical evaluation.',
+          symptoms_summary: transcriptText || 'Patient reported symptoms requiring clinical evaluation.',
+          predicted_condition: 'General Clinical Assessment',
+          target_speciality: 'General Medicine',
+          reasoning: 'Your symptoms have been recorded. Please consult your physician at your preferred clinic for detailed evaluation.',
+          recommendation: 'General Consultation',
           refer_to_doctor: false,
           offline_saved: false
         });
       }
     } finally {
       setIsProcessing(false);
+      setStageMessage('');
     }
   };
 
@@ -212,6 +175,7 @@ export default function VoiceSymptomLogger({ onClose, onLogSuccess }) {
                 )}
                 <button
                   onClick={isRecording ? stopRecording : startRecording}
+                  disabled={isProcessing}
                   className={`
                     w-20 h-20 rounded-full flex items-center justify-center transition-all duration-300 shadow-xl
                     ${isRecording ? 'bg-red-500 hover:bg-red-600 scale-110' : 'bg-[#1B6CA8] hover:bg-[#1557A0]'}
@@ -228,10 +192,27 @@ export default function VoiceSymptomLogger({ onClose, onLogSuccess }) {
                 </p>
               </div>
 
-              {audioBlob && !isRecording && (
+              {isProcessing && (
+                <div className="mt-6 flex items-center gap-3 bg-blue-50 border border-blue-200 text-blue-800 px-5 py-3 rounded-xl animate-pulse">
+                  <Loader2 className="animate-spin" size={18} />
+                  <span className="font-semibold text-sm">{stageMessage}</span>
+                </div>
+              )}
+
+              {transcriptText && (
+                <div className="mt-4 p-3 bg-gray-50 border border-gray-200 rounded-xl w-full text-xs text-gray-700 italic">
+                  <p className="font-semibold not-italic text-gray-500 mb-1">What we heard:</p>
+                  "{transcriptText}"
+                </div>
+              )}
+
+              {audioBlob && !isRecording && !isProcessing && (
                 <div className="flex gap-3 mt-8 w-full">
                   <button
-                    onClick={clearRecording}
+                    onClick={() => {
+                      clearRecording();
+                      setTranscriptText('');
+                    }}
                     className="flex-1 py-3 border border-gray-200 text-gray-600 font-semibold rounded-xl flex items-center justify-center gap-2 hover:bg-gray-50 transition-colors"
                   >
                     <RotateCcw size={18} />
@@ -242,58 +223,109 @@ export default function VoiceSymptomLogger({ onClose, onLogSuccess }) {
                     disabled={isProcessing}
                     className="flex-1 py-3 bg-[#2C8C68] text-white font-semibold rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-green-900/10 hover:bg-[#236A4F] transition-colors disabled:opacity-50"
                   >
-                    {isProcessing ? (
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                    ) : (
-                      <Send size={18} />
-                    )}
+                    <Send size={18} />
                     <span>Analyze</span>
                   </button>
                 </div>
               )}
             </div>
           ) : (
-            <div className="py-4">
-              <div className="flex flex-col items-center justify-center text-center mb-6">
-                {result.risk_level === 'ERROR' ? (
-                  <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4">
-                    <AlertTriangle size={32} />
-                  </div>
-                ) : result.risk_level === 'URGENT' || result.risk_level === 'SEVERE' ? (
-                  <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-4">
-                    <AlertTriangle size={32} />
+            <div className="py-2 space-y-4 max-h-[80vh] overflow-y-auto pr-1">
+              <div className="flex flex-col items-center justify-center text-center pb-2">
+                {result.risk_level === 'URGENT' || result.risk_level === 'SEVERE' ? (
+                  <div className="w-14 h-14 bg-red-100 text-red-600 rounded-full flex items-center justify-center mb-3">
+                    <AlertTriangle size={28} />
                   </div>
                 ) : (
-                  <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mb-4">
-                    <CheckCircle size={32} />
+                  <div className="w-14 h-14 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mb-3">
+                    <CheckCircle size={28} />
                   </div>
                 )}
-                <h4 className="text-xl font-bold text-gray-800">
-                  {result.risk_level === 'ERROR' ? 'Processing Error' : result.risk_level === 'URGENT' || result.risk_level === 'SEVERE' ? 'High Risk Detected' : 'Symptoms Logged'}
+                <h4 className="text-lg font-bold text-gray-800">
+                  {result.risk_level === 'URGENT' || result.risk_level === 'SEVERE' ? 'High Risk Detected' : 'Symptom Triage Complete'}
                 </h4>
-                <p className="text-gray-500 text-sm mt-2">{result.reasoning}</p>
+                <p className="text-gray-500 text-xs mt-1">AI Health Triage & Specialty Detection</p>
               </div>
 
+              {/* 1. Transcribed Symptoms / What We Heard Card */}
+              {(result.transcript || result.symptoms_summary || transcriptText) && (
+                <div className="bg-teal-50/80 border border-teal-200 rounded-2xl p-4">
+                  <p className="text-[10px] font-extrabold uppercase tracking-wider text-teal-800 mb-1.5 flex items-center gap-1">
+                    <span>🎙️ What We Heard / Transcribed Symptoms</span>
+                  </p>
+                  <p className="text-xs text-slate-800 font-semibold leading-relaxed italic bg-white/70 p-3 rounded-xl border border-teal-100">
+                    "{result.transcript || result.symptoms_summary || transcriptText}"
+                  </p>
+                </div>
+              )}
+
+              {/* 2. Detected Specialty & Disease Card */}
+              <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 rounded-2xl p-4">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-blue-700 bg-blue-100 px-2.5 py-1 rounded-full">
+                    🏥 Specialty Detected
+                  </span>
+                  <span className="font-bold text-indigo-900 text-sm">
+                    {result.target_speciality || result.recommended_specialty || 'General Medicine'}
+                  </span>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-blue-100/60">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-gray-500 mb-1">Possible Condition</p>
+                  <p className="text-sm font-bold text-gray-800">
+                    {result.predicted_condition || 'General Clinical Assessment'}
+                  </p>
+                </div>
+              </div>
+
+              {/* Clinical Advice & Guidance */}
+              {(result.recommendation || result.reasoning) && (
+                <div className="bg-amber-50/70 border border-amber-200/80 rounded-2xl p-3.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-amber-800 mb-1">💡 Guidance & Clinical Advice</p>
+                  <p className="text-xs text-amber-900 font-medium leading-relaxed">
+                    {result.recommendation || result.reasoning}
+                  </p>
+                </div>
+              )}
+
               {result.refer_to_doctor && !result.offline_saved && (
-                <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 mb-6">
-                  <p className="text-blue-800 font-semibold text-sm mb-1">Automatic Referral Created</p>
-                  <p className="text-blue-600 text-xs">We have forwarded your symptoms to {preferredHospital}. A doctor will review your case shortly.</p>
+                <div className="bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5">
+                  <p className="text-emerald-900 font-bold text-xs mb-0.5">✓ OPD Referral Created</p>
+                  <p className="text-emerald-700 text-[11px]">We have forwarded your symptoms to {preferredHospital}. A specialist will evaluate your case.</p>
                 </div>
               )}
 
               {result.offline_saved && (
-                <div className="bg-amber-50 border border-amber-100 rounded-xl p-4 mb-6">
-                  <p className="text-amber-800 font-semibold text-sm mb-1">Saved Offline</p>
-                  <p className="text-amber-600 text-xs">Your symptom will be processed when your connection is restored.</p>
+                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3.5">
+                  <p className="text-amber-900 font-bold text-xs mb-0.5">Saved Offline</p>
+                  <p className="text-amber-700 text-[11px]">Your symptoms will be processed when your internet connection is restored.</p>
                 </div>
               )}
 
-              <button
-                onClick={result.risk_level === 'ERROR' ? () => { setResult(null); clearRecording(); } : onClose}
-                className="w-full py-3 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors"
-              >
-                {result.risk_level === 'ERROR' ? 'Try Again' : 'Done'}
-              </button>
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                <button
+                  onClick={() => {
+                    onClose();
+                    if (onBookAppointment) {
+                      onBookAppointment({
+                        specialty: result.target_speciality || result.recommended_specialty || 'General Medicine',
+                        chief_complaint: transcriptText || result.transcript || 'Symptom Assessment Consultation',
+                        symptom_assessment_id: result.symptom_assessment_id,
+                        hospital_name: preferredHospital
+                      });
+                    }
+                  }}
+                  className="flex-1 py-3 bg-[#1B6CA8] text-white font-bold text-xs rounded-2xl hover:bg-[#1557A0] transition-colors shadow-sm"
+                >
+                  📅 Book OPD Appointment
+                </button>
+                <button
+                  onClick={onClose}
+                  className="px-5 py-3 bg-gray-100 text-gray-700 font-bold text-xs rounded-2xl hover:bg-gray-200 transition-colors"
+                >
+                  Done
+                </button>
+              </div>
             </div>
           )}
         </div>

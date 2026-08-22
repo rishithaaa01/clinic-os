@@ -12,6 +12,7 @@ import Medicines from './pages/patient/Medicines';
 import LabTests from './pages/patient/LabTests';
 import Consents from './pages/patient/Consents';
 import LabDashboard from './pages/lab/Dashboard';
+import ReceptionistDashboard from './pages/receptionist/Dashboard';
 
 function ProtectedRoute({ children, allowedRoles }) {
   const { isAuthenticated, user } = useAuthStore();
@@ -151,6 +152,16 @@ function App() {
                 element={
                   <ProtectedRoute allowedRoles={['lab']}>
                     <LabDashboard />
+                  </ProtectedRoute>
+                }
+              />
+
+              {/* Receptionist routes */}
+              <Route
+                path="/receptionist/*"
+                element={
+                  <ProtectedRoute allowedRoles={['receptionist', 'admin']}>
+                    <ReceptionistDashboard />
                   </ProtectedRoute>
                 }
               />

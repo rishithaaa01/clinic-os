@@ -111,6 +111,9 @@ export default function ReferralsScreen() {
     onSuccess: () => {
       notifyReferralAccepted();
       refetch();
+      queryClient.invalidateQueries({ queryKey: ['doctorReferrals'] });
+      queryClient.invalidateQueries({ queryKey: ['queue'] });
+      queryClient.invalidateQueries({ queryKey: ['doctorPatients'] });
       toast.success('Referral accepted. Patient added to your OPD queue.');
     },
     onError: (err: any) => {

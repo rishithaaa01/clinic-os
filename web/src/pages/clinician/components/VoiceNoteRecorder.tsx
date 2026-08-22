@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Mic, X, Square, RotateCcw, Check, Sparkles, AlertCircle } from 'lucide-react';
+import { Mic, X, Square, RotateCcw, Check, Sparkles, AlertCircle, Loader2 } from 'lucide-react';
 import { useVoiceRecorder } from '../../../hooks/useVoiceRecorder';
 import api from '../../../services/clinicianApi';
 import toast from 'react-hot-toast';
@@ -10,9 +10,13 @@ interface VoiceNoteRecorderProps {
   onClose: () => void;
 }
 
+type ProcessStage = 'idle' | 'uploading' | 'transcribing' | 'analyzing' | 'enriching';
+
 export default function VoiceNoteRecorder({ visitId, onExtractionComplete, onClose }: VoiceNoteRecorderProps) {
-  const { isRecording, duration, audioBlob, startRecording, stopRecording, clearRecording } = useVoiceRecorder();
+  const { isRecording, duration, audioBlob, startRecording, stopRecording, stopAndGetBlob, clearRecording } = useVoiceRecorder();
   const [isProcessing, setIsProcessing] = useState(false);
+  const [stage, setStage] = useState<ProcessStage>('idle');
+  const [stageMessage, setStageMessage] = useState('');
   const [transcriptionData, setTranscriptionData] = useState<any>(null);
 
   const formatTime = (seconds: number) => {
@@ -21,28 +25,68 @@ export default function VoiceNoteRecorder({ visitId, onExtractionComplete, onClo
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  const translateError = (err: any) => {
+    if (!err) return "We're taking longer than expected to process the recording. Please try again.";
+    if (err.code === 'ECONNABORTED' || err.message?.includes('timeout') || err.response?.status === 504) {
+      return "We're taking longer than expected to process the recording. Please try again.";
+    }
+    return err.response?.data?.detail || err.response?.data?.message || "We couldn't process the recording. Please try again.";
+  };
+
   const handleProcess = async () => {
-    if (!audioBlob) return;
+    let targetBlob = audioBlob;
+    if (isRecording) {
+      targetBlob = await stopAndGetBlob();
+    }
+
+    if (!targetBlob || targetBlob.size === 0) {
+      toast.error("Recorded audio file is empty. Please re-record.");
+      return;
+    }
+
     setIsProcessing(true);
+    setStage('uploading');
+    setStageMessage('Uploading recording...');
+
     try {
-      const data = await api.processVoiceNote(visitId, audioBlob);
+      console.log(`[DEVELOPER DIAGNOSTIC - CLINICIAN VOICE UI] Audio Blob MIME: ${targetBlob.type || 'audio/webm'} | File Size: ${targetBlob.size}B | Duration: ${duration}s`);
+      
+      setStage('transcribing');
+      setStageMessage('Transcribing audio recording...');
+      
+      const data = await api.processVoiceNote(visitId, targetBlob);
+      
+      setStage('analyzing');
+      setStageMessage('Analyzing symptoms & specialty...');
+      
       setTranscriptionData(data);
-    } catch (err) {
-      console.warn("Failed to process clinician voice note. Storing locally as Base64.", err);
-      try {
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = () => {
-          localStorage.setItem(`offline_voice_${visitId}`, reader.result as string);
-          toast.success("Voice note saved locally! Click 'Process Now' when connection returns.");
-          onClose();
-        };
-      } catch (saveErr) {
-        console.error("FileReader save error:", saveErr);
-        toast.error("Failed to process voice note. Check internet connection.");
+      if (data.ollama_status === 'unavailable') {
+        toast('Advanced clinical insights are temporarily unavailable. Standard results generated.', { icon: 'ℹ️' });
+      } else {
+        toast.success("Voice note analyzed successfully!");
+      }
+    } catch (err: any) {
+      console.error("Failed to process clinician voice note:", err);
+      if (!navigator.onLine) {
+        try {
+          const reader = new FileReader();
+          reader.readAsDataURL(targetBlob);
+          reader.onloadend = () => {
+            localStorage.setItem(`offline_voice_${visitId}`, reader.result as string);
+            toast.success("Saved offline. Will process when connection returns.");
+            onClose();
+          };
+        } catch (saveErr) {
+          toast.error("Failed to save offline voice note.");
+        }
+      } else {
+        const errorMsg = translateError(err);
+        toast.error(errorMsg);
       }
     } finally {
       setIsProcessing(false);
+      setStage('idle');
+      setStageMessage('');
     }
   };
 
@@ -74,6 +118,7 @@ export default function VoiceNoteRecorder({ visitId, onExtractionComplete, onClo
                 )}
                 <button
                   onClick={isRecording ? stopRecording : startRecording}
+                  disabled={isProcessing}
                   className={`
                     w-24 h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-xl
                     ${isRecording ? 'bg-red-500 hover:bg-red-600 scale-110' : 'bg-[#D35400] hover:bg-[#A04000]'}
@@ -93,7 +138,14 @@ export default function VoiceNoteRecorder({ visitId, onExtractionComplete, onClo
                 </p>
               </div>
 
-              {audioBlob && !isRecording && (
+              {isProcessing && (
+                <div className="mt-8 flex items-center gap-3 bg-blue-50 border border-blue-200 text-blue-800 px-6 py-3 rounded-2xl animate-pulse">
+                  <Loader2 className="animate-spin" size={20} />
+                  <span className="font-semibold text-sm">{stageMessage}</span>
+                </div>
+              )}
+
+              {audioBlob && !isRecording && !isProcessing && (
                 <div className="flex gap-4 mt-12 w-full">
                   <button
                     onClick={clearRecording}
@@ -107,23 +159,26 @@ export default function VoiceNoteRecorder({ visitId, onExtractionComplete, onClo
                     disabled={isProcessing}
                     className="flex-1 py-4 bg-[#1B6CA8] text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-lg shadow-blue-900/10 hover:bg-[#154360] transition-colors disabled:opacity-50"
                   >
-                    {isProcessing ? (
-                      <div className="w-5 h-5 border-2 border-white border-t-transparent animate-spin rounded-full" />
-                    ) : (
-                      <Sparkles size={20} />
-                    )}
-                    <span>{isProcessing ? 'Analyzing...' : 'Analyze with AI'}</span>
+                    <Sparkles size={20} />
+                    <span>Analyze with AI</span>
                   </button>
                 </div>
               )}
             </div>
           ) : (
             <div className="space-y-6">
+              {transcriptionData.ollama_status === 'unavailable' && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800 flex items-center gap-2">
+                  <AlertCircle size={16} className="shrink-0" />
+                  <span>Advanced clinical insights are temporarily unavailable. Displaying core AI transcription & diagnosis.</span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-6">
                 <div className="space-y-4">
                   <h4 className="text-xs font-bold text-[#888] uppercase tracking-wider">Raw Transcription</h4>
                   <div className="bg-[#F7F3EE] rounded-2xl p-4 h-[300px] overflow-y-auto text-sm text-[#333] leading-relaxed italic border border-[#E2DDD8]">
-                    {transcriptionData.raw_transcription}
+                    {transcriptionData.raw_transcription || transcriptionData.transcription || 'No transcript recorded.'}
                   </div>
                 </div>
 
@@ -133,7 +188,8 @@ export default function VoiceNoteRecorder({ visitId, onExtractionComplete, onClo
                     {Object.entries({
                       'Chief Complaint': transcriptionData.chief_complaint,
                       'Examination': transcriptionData.examination_findings,
-                      'Diagnoses': transcriptionData.diagnosis?.join(', '),
+                      'Diagnoses': Array.isArray(transcriptionData.diagnosis) ? transcriptionData.diagnosis.join(', ') : (transcriptionData.predicted_condition || transcriptionData.diagnosis),
+                      'Recommended Specialty': transcriptionData.recommended_specialty,
                       'Plan': transcriptionData.plan,
                       'Follow-up': transcriptionData.follow_up
                     }).map(([label, value]) => (
@@ -148,7 +204,10 @@ export default function VoiceNoteRecorder({ visitId, onExtractionComplete, onClo
 
               <div className="flex gap-4 pt-4 border-t border-[#E2DDD8]">
                 <button
-                  onClick={() => setTranscriptionData(null)}
+                  onClick={() => {
+                    setTranscriptionData(null);
+                    clearRecording();
+                  }}
                   className="px-6 py-4 border-2 border-[#E2DDD8] text-[#666] font-bold rounded-2xl flex-1 hover:bg-[#F7F3EE] transition-colors"
                 >
                   Discard & Retry

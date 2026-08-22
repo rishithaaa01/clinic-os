@@ -43,25 +43,31 @@ export default function PatientsScreen() {
   const { updatePatientCounts } = useRealTimeUpdates();
   const { setActivePatient } = useClinicianStore();
 
-  // Fetch doctor's patients
   const { data: patients = [], isLoading, refetch } = useQuery({
     queryKey: ['doctorPatients'],
     queryFn: async () => {
       const data = await api.getMyPatients();
 
-      // Ensure we have an array
+      // Ensure we have an array and deduplicate by patient_id
       const patientsArray = Array.isArray(data) ? data : [];
+      const seen = new Set();
+      const uniquePatients = patientsArray.filter((p: any) => {
+        const id = p.patient_id || p._id || p.id;
+        if (!id || seen.has(id)) return false;
+        seen.add(id);
+        return true;
+      });
 
       // Sort by last visit date descending (most recent first)
-      return patientsArray.sort((a: any, b: any) => {
+      return uniquePatients.sort((a: any, b: any) => {
         const dateA = a.last_visit_date ? new Date(a.last_visit_date).getTime() : 0;
         const dateB = b.last_visit_date ? new Date(b.last_visit_date).getTime() : 0;
         return dateB - dateA;
       });
     },
-    refetchInterval: 30000, // Refetch every 30 seconds
+    refetchInterval: 4000, // Refetch every 4 seconds for real-time updates
     refetchOnWindowFocus: true,
-    staleTime: 10000,
+    staleTime: 2000,
     retry: 2,
   });
 
