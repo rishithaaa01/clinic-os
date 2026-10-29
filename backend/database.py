@@ -14,6 +14,32 @@ class Database:
 db = Database()
 
 from fastapi import HTTPException
+from functools import wraps
+import pymongo.errors
+
+def mongo_retry(max_retries=3, delay=0.5):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            for attempt in range(1, max_retries + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except (pymongo.errors.AutoReconnect, pymongo.errors.ServerSelectionTimeoutError, pymongo.errors.NetworkTimeout) as e:
+                    logger.warning(f"MongoDB retry attempt {attempt}/{max_retries} due to {type(e).__name__}: {e}")
+                    if attempt == max_retries:
+                        raise
+                    await asyncio.sleep(delay * (2 ** (attempt - 1)))
+                except Exception as e:
+                    if "AutoReconnect" in str(e) or "ServerSelectionTimeoutError" in str(e):
+                        logger.warning(f"MongoDB retry attempt {attempt}/{max_retries} due to string-matched error: {e}")
+                        if attempt == max_retries:
+                            raise
+                        await asyncio.sleep(delay * (2 ** (attempt - 1)))
+                    else:
+                        raise
+        return wrapper
+    return decorator
+
 
 def get_database():
     if db.db is None:

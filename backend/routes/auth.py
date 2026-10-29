@@ -4,7 +4,7 @@ from typing import Optional
 from models.user import UserResponse, TokenResponse, ProfileCompleteRequest, UserRole
 from middleware.auth_middleware import get_current_user, security
 from fastapi.security import HTTPAuthorizationCredentials
-from database import get_database
+from database import get_database, mongo_retry
 from config import settings
 from datetime import datetime, timedelta
 from jose import jwt, JWTError
@@ -554,6 +554,7 @@ async def complete_profile(request: ProfileCompleteRequest, current_user: UserRe
     return UserResponse(**updated_user)
 
 @router.get("/hospitals")
+@mongo_retry()
 async def get_hospitals():
     db = get_database()
     hospitals = await db.hospitals.find({
@@ -602,6 +603,7 @@ async def get_hospitals():
     return result
 
 @router.get("/doctors")
+@mongo_retry()
 async def get_doctors():
     db = get_database()
     doctors = await db.users.find(
