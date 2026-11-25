@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
+  SafeAreaView,
   View, 
   Text, 
   TextInput, 
@@ -10,7 +11,7 @@ import {
   Alert, 
   ScrollView 
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+
 import { useAuthStore } from '../../src/store/authStore';
 import api from '../../src/services/api';
 import { useRouter } from 'expo-router';
@@ -318,14 +319,16 @@ export default function LoginScreen() {
   };
 
   return (
-    <SafeAreaView className="flex-1 bg-white">
+    <SafeAreaView style={{ flex: 1, backgroundColor: '#FFFFFF' }} className="flex-1 bg-white">
       <KeyboardAvoidingView 
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={{ flex: 1 }}
         className="flex-1"
       >
         <ScrollView 
+          style={{ flex: 1 }}
           contentContainerStyle={{ flexGrow: 1, paddingHorizontal: 24, paddingVertical: 20 }}
-          keyboardShouldPersistTaps="handled"
+          keyboardShouldPersistTaps="always"
           showsVerticalScrollIndicator={false}
         >
           {/* Top Branding Section */}
@@ -410,15 +413,17 @@ export default function LoginScreen() {
                       {/* Email Field */}
                       <View className="space-y-1.5 mt-2">
                         <Text className="text-slate-700 text-xs font-bold uppercase tracking-wider">Email Address</Text>
-                        <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12 shadow-xs focus:border-[#1B6CA8]">
+                        <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12 ">
                           <Mail color="#64748B" size={18} />
                           <TextInput
                             className="flex-1 ml-2.5 text-slate-800 text-sm font-medium"
+                            style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                             placeholder="name@example.com"
                             placeholderTextColor="#94A3B8"
                             value={email}
                             onChangeText={setEmail}
                             autoCapitalize="none"
+                            autoCorrect={false}
                             keyboardType="email-address"
                           />
                         </View>
@@ -427,20 +432,25 @@ export default function LoginScreen() {
                       {/* Password Field with Show/Hide Toggle */}
                       <View className="space-y-1.5 mt-3">
                         <Text className="text-slate-700 text-xs font-bold uppercase tracking-wider">Password</Text>
-                        <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12 shadow-xs focus:border-[#1B6CA8]">
+                        <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12">
                           <Lock color="#64748B" size={18} />
                           <TextInput
                             className="flex-1 ml-2.5 text-slate-800 text-sm"
+                            style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                             placeholder="Enter password"
                             placeholderTextColor="#94A3B8"
                             value={password}
                             onChangeText={setPassword}
                             secureTextEntry={!showPassword}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            textContentType="password"
+                            autoComplete="current-password"
                           />
                           <TouchableOpacity 
                             onPress={() => setShowPassword(!showPassword)}
-                            className="p-1"
-                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                            className="p-2 justify-center items-center"
+                            activeOpacity={0.7}
                           >
                             {showPassword ? (
                               <EyeOff color="#64748B" size={18} />
@@ -488,11 +498,13 @@ export default function LoginScreen() {
                           <Mail color="#64748B" size={18} />
                           <TextInput
                             className="flex-1 ml-2.5 text-slate-800 text-sm"
+                            style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                             placeholder="name@example.com"
                             placeholderTextColor="#94A3B8"
                             value={emailOTP}
                             onChangeText={setEmailOTP}
                             autoCapitalize="none"
+                            autoCorrect={false}
                             keyboardType="email-address"
                           />
                         </View>
@@ -524,6 +536,7 @@ export default function LoginScreen() {
                     <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12">
                       <UserIcon color="#64748B" size={18} />
                       <TextInput
+                      style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                         className="flex-1 ml-2.5 text-slate-800 text-sm"
                         placeholder="Dr. Rajesh Kumar"
                         placeholderTextColor="#94A3B8"
@@ -538,6 +551,7 @@ export default function LoginScreen() {
                     <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12">
                       <Mail color="#64748B" size={18} />
                       <TextInput
+                      style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                         className="flex-1 ml-2.5 text-slate-800 text-sm"
                         placeholder="name@example.com"
                         placeholderTextColor="#94A3B8"
@@ -555,15 +569,21 @@ export default function LoginScreen() {
                       <Lock color="#64748B" size={18} />
                       <TextInput
                         className="flex-1 ml-2.5 text-slate-800 text-sm"
+                        style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                         placeholder="Create password"
                         placeholderTextColor="#94A3B8"
                         value={regPassword}
                         onChangeText={setRegPassword}
                         secureTextEntry={!showRegPassword}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        textContentType="newPassword"
+                        autoComplete="new-password"
                       />
                       <TouchableOpacity 
                         onPress={() => setShowRegPassword(!showRegPassword)}
-                        className="p-1"
+                        className="p-2 justify-center items-center"
+                        activeOpacity={0.7}
                       >
                         {showRegPassword ? <EyeOff color="#64748B" size={18} /> : <Eye color="#64748B" size={18} />}
                       </TouchableOpacity>
@@ -575,6 +595,7 @@ export default function LoginScreen() {
                     <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12">
                       <Text className="text-slate-500 font-semibold mr-1.5">+91</Text>
                       <TextInput
+                      style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                         className="flex-1 text-slate-800 text-sm"
                         placeholder="9876543210"
                         placeholderTextColor="#94A3B8"
@@ -663,6 +684,7 @@ export default function LoginScreen() {
                         <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12">
                           <Stethoscope color="#64748B" size={18} />
                           <TextInput
+                          style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                             className="flex-1 ml-2.5 text-slate-800 text-sm"
                             placeholder="e.g. TNMC-84920"
                             placeholderTextColor="#94A3B8"
@@ -767,6 +789,7 @@ export default function LoginScreen() {
                 <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12">
                   <Mail color="#64748B" size={18} />
                   <TextInput
+                  style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                     className="flex-1 ml-2.5 text-slate-800 text-sm"
                     placeholder="name@example.com"
                     placeholderTextColor="#94A3B8"
@@ -819,6 +842,7 @@ export default function LoginScreen() {
                 <View className="border border-slate-200 bg-white rounded-xl flex-row items-center px-3.5 h-12">
                   <Key color="#64748B" size={18} />
                   <TextInput
+                  style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                     className="flex-1 ml-2.5 text-slate-800 text-sm font-semibold"
                     placeholder="Enter 6-digit reset code"
                     placeholderTextColor="#94A3B8"
@@ -834,15 +858,21 @@ export default function LoginScreen() {
                   <Lock color="#64748B" size={18} />
                   <TextInput
                     className="flex-1 ml-2.5 text-slate-800 text-sm"
+                    style={{ flex: 1, height: 48, color: '#1e293b', fontSize: 14 }}
                     placeholder="Enter new password"
                     placeholderTextColor="#94A3B8"
                     value={newPassword}
                     onChangeText={setNewPassword}
                     secureTextEntry={!showNewPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    textContentType="newPassword"
+                    autoComplete="new-password"
                   />
                   <TouchableOpacity 
                     onPress={() => setShowNewPassword(!showNewPassword)}
-                    className="p-1"
+                    className="p-2 justify-center items-center"
+                    activeOpacity={0.7}
                   >
                     {showNewPassword ? <EyeOff color="#64748B" size={18} /> : <Eye color="#64748B" size={18} />}
                   </TouchableOpacity>

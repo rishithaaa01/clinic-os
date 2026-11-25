@@ -359,7 +359,7 @@ export default function ConsultationScreen() {
 
   return (
     <SafeAreaView className="flex-1 bg-[#F7F3EE]">
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} className="flex-1">
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} className="flex-1">
         
         {/* Header */}
         <View className="flex-row items-center justify-between p-4 bg-white border-b border-slate-200 shadow-sm">

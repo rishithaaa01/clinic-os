@@ -200,7 +200,7 @@ export default function ConsentsScreen() {
         onRequestClose={() => setShowGrantForm(false)}
       >
         <KeyboardAvoidingView 
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
           className="flex-1 justify-end bg-black/50"
         >
           <View className="bg-white rounded-t-3xl p-6 h-[80%]">

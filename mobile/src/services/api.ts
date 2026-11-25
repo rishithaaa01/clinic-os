@@ -8,7 +8,7 @@ const getBackendUrl = () => {
   }
 
   // Extract host IP dynamically from Expo dev server
-  const hostUri = Constants.expoConfig?.hostUri || Constants.experienceUrl || '';
+  const hostUri = Constants.expoConfig?.hostUri || (Constants as any).manifest?.debuggerHost || (Constants as any).manifest2?.extra?.expoClient?.hostUri || Constants.experienceUrl || '';
   if (hostUri) {
     const ip = hostUri.split(':')[0];
     if (ip && ip !== 'localhost' && ip !== '127.0.0.1') {
@@ -17,7 +17,7 @@ const getBackendUrl = () => {
   }
 
   // Fallback for local emulator or active machine IP (Wi-Fi IPv4)
-  return 'http://10.230.234.66:8000/api';
+  return 'http://10.107.47.66:8000/api';
 };
 
 const API_URL = getBackendUrl();

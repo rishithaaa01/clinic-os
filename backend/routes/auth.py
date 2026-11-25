@@ -553,54 +553,129 @@ async def complete_profile(request: ProfileCompleteRequest, current_user: UserRe
     
     return UserResponse(**updated_user)
 
+
+DEFAULT_HOSPITALS = [
+    {
+        "id": "h-gghc",
+        "hospital_id": "h-gghc",
+        "name": "Govt General Hospital Chennai",
+        "hospital_name": "Govt General Hospital Chennai",
+        "type": "govt",
+        "district": "Chennai",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "status": "active",
+        "specialties": ["Cardiology", "Emergency Medicine", "General Medicine", "Orthopaedics", "Paediatrics"]
+    },
+    {
+        "id": "h-phcv",
+        "hospital_id": "h-phcv",
+        "name": "PHC Velachery",
+        "hospital_name": "PHC Velachery",
+        "type": "govt",
+        "district": "Chennai",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "status": "active",
+        "specialties": ["General Medicine", "Obstetrics", "Paediatrics"]
+    },
+    {
+        "id": "h-kdh",
+        "hospital_id": "h-kdh",
+        "name": "Kanchipuram District Hospital",
+        "hospital_name": "Kanchipuram District Hospital",
+        "type": "govt",
+        "district": "Kanchipuram",
+        "city": "Kanchipuram",
+        "state": "Tamil Nadu",
+        "status": "active",
+        "specialties": ["General Medicine", "Gynaecology", "Orthopaedics", "Paediatrics"]
+    },
+    {
+        "id": "h-apollo",
+        "hospital_id": "h-apollo",
+        "name": "Apollo Hospital",
+        "hospital_name": "Apollo Hospital",
+        "type": "private",
+        "district": "Chennai",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "status": "active",
+        "specialties": ["Cardiology", "General Medicine", "Neurology", "Oncology"]
+    },
+    {
+        "id": "h-kauvery",
+        "hospital_id": "h-kauvery",
+        "name": "Kauvery Hospital",
+        "hospital_name": "Kauvery Hospital",
+        "type": "private",
+        "district": "Chennai",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "status": "active",
+        "specialties": ["Gastroenterology", "General Medicine", "Nephrology"]
+    }
+]
+
 @router.get("/hospitals")
-@mongo_retry()
 async def get_hospitals():
-    db = get_database()
-    hospitals = await db.hospitals.find({
-        "$or": [
-            {"status": {"$exists": False}},
-            {"status": {"$in": ["active", "APPROVED", "VERIFIED"]}},
-            {"status": {"$ne": "disabled"}}
-        ]
-    }).sort("name", 1).to_list(length=200)
+    try:
+        db = get_database()
+        if db is None:
+            return DEFAULT_HOSPITALS
+        hospitals = await db.hospitals.find({
+            "$or": [
+                {"status": {"$exists": False}},
+                {"status": {"$in": ["active", "APPROVED", "VERIFIED"]}},
+                {"status": {"$ne": "disabled"}}
+            ]
+        }).sort("name", 1).to_list(length=200)
 
-    doctors = await db.users.find({
-        "role": "doctor",
-        "verification_status": "VERIFIED",
-        "hospital_status": "APPROVED",
-        "account_status": "ACTIVE"
-    }).to_list(length=500)
+        doctors = await db.users.find({
+            "role": "doctor",
+            "verification_status": "VERIFIED",
+            "hospital_status": "APPROVED",
+            "account_status": "ACTIVE"
+        }).to_list(length=500)
 
-    hosp_specialties_map = {}
-    for d in doctors:
-        h_name = d.get("hospital") or d.get("approved_hospital_id")
-        spec = d.get("speciality") or "General Medicine"
-        if h_name:
-            if h_name not in hosp_specialties_map:
-                hosp_specialties_map[h_name] = set(["General Medicine"])
-            hosp_specialties_map[h_name].add(spec)
+        hosp_specialties_map = {}
+        for d in doctors:
+            h_name = d.get("hospital") or d.get("approved_hospital_id")
+            spec = d.get("speciality") or "General Medicine"
+            if h_name:
+                if h_name not in hosp_specialties_map:
+                    hosp_specialties_map[h_name] = set(["General Medicine"])
+                hosp_specialties_map[h_name].add(spec)
 
-    result = []
-    for h in hospitals:
-        h_id = str(h.get("_id", ""))
-        h_name = h.get("name", "")
-        if not h_name:
-            continue
-        avail_specs = list(hosp_specialties_map.get(h_name, ["General Medicine"]))
-        result.append({
-            "id": h_id,
-            "hospital_id": h_id,
-            "name": h_name,
-            "hospital_name": h_name,
-            "type": h.get("type", "govt"),
-            "district": h.get("district", ""),
-            "city": h.get("district", ""),
-            "state": h.get("state", ""),
-            "status": h.get("status", "active"),
-            "specialties": sorted(avail_specs)
-        })
-    return result
+        result = []
+        for h in hospitals:
+            h_id = str(h.get("_id", ""))
+            h_name = h.get("name", "")
+            if not h_name:
+                continue
+            avail_specs = list(hosp_specialties_map.get(h_name, ["General Medicine"]))
+            result.append({
+                "id": h_id,
+                "hospital_id": h_id,
+                "name": h_name,
+                "hospital_name": h_name,
+                "type": h.get("type", "govt"),
+                "district": h.get("district", ""),
+                "city": h.get("district", ""),
+                "state": h.get("state", ""),
+                "status": h.get("status", "active"),
+                "specialties": sorted(avail_specs)
+            })
+
+        existing_names = {r["name"].strip().lower() for r in result}
+        for def_h in DEFAULT_HOSPITALS:
+            if def_h["name"].strip().lower() not in existing_names:
+                result.append(def_h)
+
+        return result if result else DEFAULT_HOSPITALS
+    except Exception as e:
+        print(f"⚠️ [GET_HOSPITALS] Database unreachable ({e}), returning default accredited hospitals.")
+        return DEFAULT_HOSPITALS
 
 @router.get("/doctors")
 @mongo_retry()
