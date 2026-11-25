@@ -36,6 +36,22 @@ const SPECIALITIES = [
   'Ophthalmology', 'ENT', 'Neurology', 'Psychiatry', 'Oncology'
 ];
 
+const FALLBACK_HOSPITALS = [
+  { id: 'h-gghc', name: 'Govt General Hospital Chennai', type: 'govt', district: 'Chennai', state: 'Tamil Nadu' },
+  { id: 'h-phcv', name: 'PHC Velachery', type: 'govt', district: 'Chennai', state: 'Tamil Nadu' },
+  { id: 'h-kdh', name: 'Kanchipuram District Hospital', type: 'govt', district: 'Kanchipuram', state: 'Tamil Nadu' },
+  { id: 'h-apollo', name: 'Apollo Hospital', type: 'private', district: 'Chennai', state: 'Tamil Nadu' },
+  { id: 'h-kauvery', name: 'Kauvery Hospital', type: 'private', district: 'Chennai', state: 'Tamil Nadu' }
+];
+
+const FALLBACK_VILLAGES = [
+  { id: 'v1', name: 'Velachery' },
+  { id: 'v2', name: 'Kanchipuram North' },
+  { id: 'v3', name: 'Pondicherry East' },
+  { id: 'v4', name: 'Kolathur' },
+  { id: 'v5', name: 'Madhavaram' }
+];
+
 const ROLES = [
   { id: 'patient', label: 'Patient' },
   { id: 'asha', label: 'ASHA Worker' },
@@ -86,9 +102,9 @@ export default function LoginScreen() {
   const [resetCode, setResetCode] = useState('');
   const [newPassword, setNewPassword] = useState('');
 
-  // Metadata
-  const [hospitals, setHospitals] = useState<any[]>([]);
-  const [villages, setVillages] = useState<any[]>([]);
+  // Metadata with instant fallback so options are never blank
+  const [hospitals, setHospitals] = useState<any[]>(FALLBACK_HOSPITALS);
+  const [villages, setVillages] = useState<any[]>(FALLBACK_VILLAGES);
 
   useEffect(() => {
     fetchMetadata();
@@ -96,14 +112,18 @@ export default function LoginScreen() {
 
   const fetchMetadata = async () => {
     try {
-      const [hospRes, villRes] = await Promise.all([
+      const [hospRes, villRes] = await Promise.allSettled([
         api.get('/auth/hospitals'),
         api.get('/auth/villages')
       ]);
-      setHospitals(hospRes.data || []);
-      setVillages(villRes.data || []);
+      if (hospRes.status === 'fulfilled' && Array.isArray(hospRes.value?.data) && hospRes.value.data.length > 0) {
+        setHospitals(hospRes.value.data);
+      }
+      if (villRes.status === 'fulfilled' && Array.isArray(villRes.value?.data) && villRes.value.data.length > 0) {
+        setVillages(villRes.value.data);
+      }
     } catch (e) {
-      console.log("Failed to load metadata");
+      console.log("Failed to load metadata, using fallback list");
     }
   };
 
