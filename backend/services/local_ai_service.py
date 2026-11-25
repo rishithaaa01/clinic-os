@@ -6,9 +6,16 @@ import threading
 from datetime import datetime
 import json
 from typing import Any, Optional, Dict, List
-from transformers import pipeline
 
 os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+
+# torch/transformers are optional — not installed on Render (saves 1.5GB RAM)
+try:
+    from transformers import pipeline as hf_pipeline
+    HF_AVAILABLE = True
+except ImportError:
+    hf_pipeline = None
+    HF_AVAILABLE = False
 
 class LocalAIService:
     def __init__(self):
@@ -56,11 +63,14 @@ class LocalAIService:
         self.stt_pipeline = None
 
     def load_stt_pipeline(self):
+        if not HF_AVAILABLE:
+            print("[INFO] transformers not installed — Whisper STT disabled (Render/cloud mode). Using Groq Whisper API instead.")
+            return
         with self._lock:
             if self.stt_pipeline is None:
                 try:
                     print("Pre-loading Speech Recognition Pipeline (whisper-tiny)...")
-                    self.stt_pipeline = pipeline(
+                    self.stt_pipeline = hf_pipeline(
                         "automatic-speech-recognition",
                         model="openai/whisper-tiny",
                         generate_kwargs={"task": "transcribe", "language": "english"}
